@@ -3,7 +3,7 @@
     "name": "Tracker Web - Ulaval",
     "version": "1.0",
     "description": "Capture comportementale avec ON/OFF, scroll et temps",
-    "permissions": ["storage", "tabs"],
+    "permissions": ["activeTab","storage", "tabs","webNavigation"],
     "host_permissions": ["<all_urls>"],
     "background": {
       "service_worker": "background.js"
