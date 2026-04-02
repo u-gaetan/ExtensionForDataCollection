@@ -2,13 +2,10 @@ import json
 from datetime import datetime
 from urllib.parse import urlparse
 
-# 1. Rendre le texte des nœuds lisible
 def extraire_nom_court(url):
     try:
         if url.startswith('chrome://'): return 'Nouvel onglet'
-        # On repère tout de suite si c'est une recherche Google
         if 'google.' in url and '/search' in url: return '🔍 Recherche Google'
-        
         parsed = urlparse(url)
         domaine = parsed.netloc.replace('www.', '')
         return domaine if domaine else url[:20] + '...'
@@ -23,6 +20,7 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
     scroll_url = {}
     temps_url = {}
     copies_url = {}
+    saisies_url = {} # Nouveau dictionnaire pour le clavier
 
     # Extraction des métriques
     for log in logs:
@@ -36,40 +34,36 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
             temps_url[url] = max(temps_url.get(url, 0), log.get('temps_passe_ms', 0))
         elif log['type'] == 'copie':
             copies_url.setdefault(url,[]).append(log.get('texte', ''))
+        elif log['type'] == 'saisie_clavier':
+            saisies_url.setdefault(url,[]).append(log.get('texte', ''))
 
     nodes = []
     links =[]
 
-    # Variables pour gérer la Timeline (X = Temps, Y = Onglets)
     tab_y_map = {}
     next_y = 0  
-    
     last_node_in_tab = {}
     last_node_by_url = {}
-
     x_counter = 0 
-    ESPACE_X = 180 # Espace horizontal
-    ESPACE_Y = 120 # Espace vertical
+    
+    ESPACE_X = 180 
+    ESPACE_Y = 140 # Un peu plus grand pour laisser la place aux textes en biais
 
     # 2. Construction de la Ligne du Temps
     for log in logs:
         if log.get('type') == 'navigation':
             tab_id = log.get('tabId')
             url = log.get('url')
-            
-            # Sécurité si l'URL est vide
             if not url: continue
             
             parent_url = log.get('parentUrl', '')
             timestamp = log.get('timestamp')
             
-            # Sécurité pour l'heure
             try:
                 heure = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%H:%M:%S')
             except:
                 heure = "Inconnue"
 
-            # Assigner une "ligne" (Y) à cet onglet
             if tab_id not in tab_y_map:
                 tab_y_map[tab_id] = next_y
                 next_y += ESPACE_Y  
@@ -80,11 +74,11 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
 
             node_id = f"node_{x_counter}"
 
-            # Métriques
             nb_clics = len(clics_url.get(url,[]))
             scroll = scroll_url.get(url, 0)
             temps_sec = round(temps_url.get(url, 0) / 1000)
             textes_copies = copies_url.get(url,[])
+            textes_tapes = saisies_url.get(url,[])
 
             nom_court = extraire_nom_court(url)
             url_affichage = url if len(url) < 55 else url[:52] + "..."
@@ -99,6 +93,14 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
                 🖱️ Clics : <b>{nb_clics}</b><br/>
             """
             
+            # Affichage dynamique des Saisies au clavier (Nouveau)
+            if textes_tapes:
+                tooltip += f"<br/>⌨️ <b style='color:#f59e0b;'>{len(textes_tapes)} texte(s) tapé(s) :</b><br/>"
+                for t in textes_tapes[:3]:
+                    extrait = t[:40] + "..." if len(t) > 40 else t
+                    tooltip += f"<span style='font-size:12px; color:#cbd5e1;'>- \"<i>{extrait}</i>\"</span><br/>"
+
+            # Affichage dynamique des Copies
             if textes_copies:
                 tooltip += f"<br/>📋 <b style='color:#22c55e;'>{len(textes_copies)} texte(s) copié(s) :</b><br/>"
                 for t in textes_copies[:3]:
@@ -107,7 +109,7 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
 
             tooltip += f"<br/><a href='{url}' target='_blank' style='display:inline-block; background:#3b82f6; color:white; padding:5px 10px; border-radius:4px; text-decoration:none; margin-top:5px;'>Ouvrir la page</a></div>"
 
-            est_copie = len(textes_copies) > 0
+            a_interagi = len(textes_copies) > 0 or len(textes_tapes) > 0
             
             nodes.append({
                 "id": node_id,
@@ -115,25 +117,31 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
                 "x": x,
                 "y": y,
                 "value": nb_clics,
-                "symbolSize": 25 if est_copie else (15 if nb_clics > 0 else 10),
+                "symbolSize": 25 if a_interagi else (15 if nb_clics > 0 else 10),
                 "itemStyle": {
-                    "color": "#22c55e" if est_copie else ("#ec4899" if nb_clics > 0 else "#3b82f6"),
+                    "color": "#f59e0b" if len(textes_tapes)>0 else ("#22c55e" if len(textes_copies)>0 else ("#ec4899" if nb_clics > 0 else "#3b82f6")),
                     "borderColor": "#fff", "borderWidth": 2
                 },
-                "label": { "show": True, "position": "bottom", "fontSize": 12, "color": "#334155" },
+                "label": { 
+                    "show": True, 
+                    "position": "bottom", 
+                    "rotate": 35,             # <--- TEXTE EN BIAIS ICI (35 degrés)
+                    "align": "left",          # Alignement pour éviter la superposition
+                    "verticalAlign": "top",
+                    "distance": 8,
+                    "fontSize": 12, 
+                    "color": "#334155" 
+                },
                 "tooltipDetails": tooltip
             })
 
-            # Gestion des Liens
             source_id = None
             curveness = 0
 
             if tab_id in last_node_in_tab:
-                # Même onglet = Ligne droite
                 source_id = last_node_in_tab[tab_id]
                 curveness = 0 
             else:
-                # Nouvel onglet = Branche courbée
                 if parent_url in last_node_by_url:
                     source_id = last_node_by_url[parent_url]
                     curveness = 0.3 
@@ -148,9 +156,6 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
             last_node_in_tab[tab_id] = node_id
             last_node_by_url[url] = node_id
 
-    # Petit message dans la console pour vérifier que tout va bien
-    print(f"[{fichier_entree}] : {len(nodes)} actions de navigation trouvées et traitées.")
-
     html = f"""
     <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Timeline de Navigation</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
@@ -161,7 +166,7 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
     </style>
     </head><body>
     <div id="header">
-        <b>Légende :</b> <span style="color:#3b82f6;">🔵 Visite simple</span> | <span style="color:#ec4899;">🔴 Clics détectés</span> | <span style="color:#22c55e;">🟢 Texte copié !</span><br/>
+        <b>Légende :</b> <span style="color:#3b82f6;">🔵 Visite simple</span> | <span style="color:#ec4899;">🔴 Clics</span> | <span style="color:#22c55e;">🟢 Copié</span> | <span style="color:#f59e0b;">🟠 Clavier</span><br/>
         <i>Utilisez la molette pour zoomer et glissez pour vous déplacer dans le temps ➔</i>
     </div>
     <div id="chart"></div>
@@ -176,11 +181,11 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
                 formatter: info => info.data.tooltipDetails || info.name 
             }},
             series:[{{
-                type: 'graph', layout: 'none', // CORRECTION ICI (// au lieu de #)
+                type: 'graph', layout: 'none', 
                 data: {json.dumps(nodes)},
                 links: {json.dumps(links)},
-                roam: true, // CORRECTION ICI
-                edgeSymbol: ['none', 'arrow'], // CORRECTION ICI
+                roam: true,
+                edgeSymbol:['none', 'arrow'], 
                 edgeSymbolSize: [0, 10]
             }}]
         }};
@@ -190,8 +195,8 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
     
     with open(fichier_sortie, 'w', encoding='utf-8') as f: 
         f.write(html)
-    print(f"Timeline générée : {fichier_sortie}")
+    print(f"✅ Timeline générée ! Ouvre {fichier_sortie}")
 
 if __name__ == "__main__": 
-    generer_graphe_temporel("Data_of_studies/etude8.json", "Visualisation/arbre8.html")
-    #generer_graphe_temporel("Data_of_studies/etude4.json", "Visualisation/arbre4.2.html")
+    generer_graphe_temporel("Data_of_studies/etude10.json", "Visualisation/arbre10.html")
+    # generer_graphe_temporel("Data_of_studies/etude4.json", "Visualisation/arbre4.html")
