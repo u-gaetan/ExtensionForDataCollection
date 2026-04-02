@@ -1,14 +1,14 @@
 {
     "manifest_version": 3,
-    "name": "Prototype Tracker Web",
+    "name": "Tracker Web - Ulaval",
     "version": "1.0",
-    "description": "Capture clics et arbre d'historique avec export JSON",
-    "permissions": ["storage","tabs"],
+    "description": "Capture comportementale avec ON/OFF, scroll et temps",
+    "permissions": ["storage", "tabs"],
     "host_permissions": ["<all_urls>"],
     "background": {
       "service_worker": "background.js"
     },
-    "content_scripts": [
+    "content_scripts":[
       {
         "matches": ["<all_urls>"],
         "js": ["content.js"]
@@ -17,4 +17,4 @@
     "action": {
       "default_popup": "popup.html"
     }
-  }
+}
