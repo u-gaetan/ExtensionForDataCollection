@@ -1,108 +1,197 @@
 import json
 from datetime import datetime
+from urllib.parse import urlparse
 
-def generer_arbre(fichier_entree, fichier_sortie):
+# 1. Rendre le texte des nœuds lisible
+def extraire_nom_court(url):
+    try:
+        if url.startswith('chrome://'): return 'Nouvel onglet'
+        # On repère tout de suite si c'est une recherche Google
+        if 'google.' in url and '/search' in url: return '🔍 Recherche Google'
+        
+        parsed = urlparse(url)
+        domaine = parsed.netloc.replace('www.', '')
+        return domaine if domaine else url[:20] + '...'
+    except:
+        return str(url)[:20] + "..."
+
+def generer_graphe_temporel(fichier_entree, fichier_sortie):
     with open(fichier_entree, 'r', encoding='utf-8') as f:
         logs = json.load(f)
 
     clics_url = {}
     scroll_url = {}
     temps_url = {}
+    copies_url = {}
 
-    # Extraction
+    # Extraction des métriques
     for log in logs:
         url = log.get('url')
         if not url: continue
-
+        
         if log['type'] == 'clic':
             clics_url.setdefault(url, []).append(log)
         elif log['type'] == 'page_quittee':
-            # On garde le scroll maximum enregistré pour cette page
-            scroll = log.get('maxScroll', 0)
-            if scroll > scroll_url.get(url, 0):
-                scroll_url[url] = scroll
-            # On met à jour le temps passé (qui vient maintenant du navigateur en ms)
+            scroll_url[url] = max(scroll_url.get(url, 0), log.get('maxScroll', 0))
             temps_url[url] = max(temps_url.get(url, 0), log.get('temps_passe_ms', 0))
+        elif log['type'] == 'copie':
+            copies_url.setdefault(url,[]).append(log.get('texte', ''))
 
-    onglets = {}
+    nodes = []
+    links =[]
+
+    # Variables pour gérer la Timeline (X = Temps, Y = Onglets)
+    tab_y_map = {}
+    next_y = 0  
     
+    last_node_in_tab = {}
+    last_node_by_url = {}
+
+    x_counter = 0 
+    ESPACE_X = 180 # Espace horizontal
+    ESPACE_Y = 120 # Espace vertical
+
+    # 2. Construction de la Ligne du Temps
     for log in logs:
         if log.get('type') == 'navigation':
             tab_id = log.get('tabId')
             url = log.get('url')
+            
+            # Sécurité si l'URL est vide
+            if not url: continue
+            
             parent_url = log.get('parentUrl', '')
-            heure = datetime.fromisoformat(log['timestamp'].replace('Z', '+00:00')).strftime('%H:%M:%S')
+            timestamp = log.get('timestamp')
+            
+            # Sécurité pour l'heure
+            try:
+                heure = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%H:%M:%S')
+            except:
+                heure = "Inconnue"
 
-            if tab_id not in onglets:
-                onglets[tab_id] = {'noeuds': {}, 'racine': {"name": f"Onglet {tab_id}", "children":[]}}
+            # Assigner une "ligne" (Y) à cet onglet
+            if tab_id not in tab_y_map:
+                tab_y_map[tab_id] = next_y
+                next_y += ESPACE_Y  
+            
+            y = tab_y_map[tab_id]
+            x = x_counter * ESPACE_X
+            x_counter += 1
 
+            node_id = f"node_{x_counter}"
+
+            # Métriques
             nb_clics = len(clics_url.get(url,[]))
             scroll = scroll_url.get(url, 0)
-            temps_sec = round(temps_url.get(url, 0) / 1000) # Conversion ms en secondes
+            temps_sec = round(temps_url.get(url, 0) / 1000)
+            textes_copies = copies_url.get(url,[])
 
-            # CONSTRUCTION DE LA CARTE (Carré d'infos avec lien cliquable)
-            url_affichage = url if len(url) < 50 else url[:47] + "..."
+            nom_court = extraire_nom_court(url)
+            url_affichage = url if len(url) < 55 else url[:52] + "..."
+
+            # Construction de la carte (Tooltip)
             tooltip = f"""
-            <div style='max-width:300px; white-space:normal; padding:5px; font-family:sans-serif;'>
-                <b style='color:#3b82f6; font-size:14px; word-wrap:break-word;'>{url_affichage}</b><hr style='border:1px solid #334155; margin:8px 0;'>
+            <div style='max-width:320px; white-space:normal; padding:5px; font-family:sans-serif;'>
+                <b style='color:#3b82f6; font-size:13px; word-wrap:break-word;'>{url_affichage}</b><hr style='border:1px solid #334155; margin:8px 0;'>
                 🕒 Ouvert à : <b>{heure}</b><br/>
                 ⏳ Temps passé : <b>{temps_sec} sec</b><br/>
                 ⬇️ Scroll max : <b>{scroll}%</b><br/>
                 🖱️ Clics : <b>{nb_clics}</b><br/>
-                <br/>
-                <a href='{url}' target='_blank' style='display:inline-block; background:#3b82f6; color:white; padding:5px 10px; border-radius:4px; text-decoration:none; margin-top:5px;'>Ouvrir la page</a>
-            </div>
             """
-
-            nom_court = url.replace("https://", "").replace("http://", "").replace("www.", "")[:30] + "..."
             
-            nouveau_noeud = {
+            if textes_copies:
+                tooltip += f"<br/>📋 <b style='color:#22c55e;'>{len(textes_copies)} texte(s) copié(s) :</b><br/>"
+                for t in textes_copies[:3]:
+                    extrait = t[:40] + "..." if len(t) > 40 else t
+                    tooltip += f"<span style='font-size:12px; color:#cbd5e1;'>- \"<i>{extrait}</i>\"</span><br/>"
+
+            tooltip += f"<br/><a href='{url}' target='_blank' style='display:inline-block; background:#3b82f6; color:white; padding:5px 10px; border-radius:4px; text-decoration:none; margin-top:5px;'>Ouvrir la page</a></div>"
+
+            est_copie = len(textes_copies) > 0
+            
+            nodes.append({
+                "id": node_id,
                 "name": nom_court,
-                "tooltipDetails": tooltip,
+                "x": x,
+                "y": y,
                 "value": nb_clics,
-                "itemStyle": {"color": "#ec4899" if nb_clics > 0 else "#3b82f6"},
-                "children":[]
-            }
+                "symbolSize": 25 if est_copie else (15 if nb_clics > 0 else 10),
+                "itemStyle": {
+                    "color": "#22c55e" if est_copie else ("#ec4899" if nb_clics > 0 else "#3b82f6"),
+                    "borderColor": "#fff", "borderWidth": 2
+                },
+                "label": { "show": True, "position": "bottom", "fontSize": 12, "color": "#334155" },
+                "tooltipDetails": tooltip
+            })
 
-            onglets[tab_id]['noeuds'][url] = nouveau_noeud
+            # Gestion des Liens
+            source_id = None
+            curveness = 0
 
-            if parent_url in onglets[tab_id]['noeuds']:
-                onglets[tab_id]['noeuds'][parent_url]['children'].append(nouveau_noeud)
+            if tab_id in last_node_in_tab:
+                # Même onglet = Ligne droite
+                source_id = last_node_in_tab[tab_id]
+                curveness = 0 
             else:
-                onglets[tab_id]['racine']['children'].append(nouveau_noeud)
+                # Nouvel onglet = Branche courbée
+                if parent_url in last_node_by_url:
+                    source_id = last_node_by_url[parent_url]
+                    curveness = 0.3 
+            
+            if source_id:
+                links.append({
+                    "source": source_id,
+                    "target": node_id,
+                    "lineStyle": { "curveness": curveness, "color": "#94a3b8", "width": 2 }
+                })
 
-    arbre_final = {"name": "Début de la session", "children": [d['racine'] for d in onglets.values()]}
+            last_node_in_tab[tab_id] = node_id
+            last_node_by_url[url] = node_id
+
+    # Petit message dans la console pour vérifier que tout va bien
+    print(f"[{fichier_entree}] : {len(nodes)} actions de navigation trouvées et traitées.")
 
     html = f"""
-    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Arbre de Navigation</title>
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Timeline de Navigation</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-    <style>body {{ margin: 0; background:#f8fafc; font-family: sans-serif; }} #chart {{ width: 100vw; height: 100vh; }}</style>
-    </head><body><div id="chart"></div>
+    <style>
+        body {{ margin: 0; background:#f8fafc; font-family: sans-serif; overflow: hidden; }} 
+        #chart {{ width: 100vw; height: 100vh; }}
+        #header {{ position: absolute; top: 10px; left: 20px; z-index: 10; background: rgba(255,255,255,0.9); padding: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+    </style>
+    </head><body>
+    <div id="header">
+        <b>Légende :</b> <span style="color:#3b82f6;">🔵 Visite simple</span> | <span style="color:#ec4899;">🔴 Clics détectés</span> | <span style="color:#22c55e;">🟢 Texte copié !</span><br/>
+        <i>Utilisez la molette pour zoomer et glissez pour vous déplacer dans le temps ➔</i>
+    </div>
+    <div id="chart"></div>
     <script>
         var myChart = echarts.init(document.getElementById('chart'));
         var option = {{
             tooltip: {{ 
-                trigger: 'item', 
-                enterable: true, // PERMET DE RENTRER LA SOURIS DANS LE CARRÉ POUR CLIQUER
+                trigger: 'item', enterable: true,
                 backgroundColor: 'rgba(15, 23, 42, 0.95)',
                 textStyle: {{ color: '#fff' }},
                 extraCssText: 'box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-radius:8px;',
-                formatter: info => info.data.tooltipDetails || info.data.name 
+                formatter: info => info.data.tooltipDetails || info.name 
             }},
-            series: [{{
-                type: 'tree', 
-                data:[{json.dumps(arbre_final)}], 
-                label: {{position: 'left'}}, 
-                initialTreeDepth: -1, // DEPLIE TOUTES LES BRANCHES PAR DEFAUT
-                animationDurationUpdate: 750
+            series:[{{
+                type: 'graph', layout: 'none', // CORRECTION ICI (// au lieu de #)
+                data: {json.dumps(nodes)},
+                links: {json.dumps(links)},
+                roam: true, // CORRECTION ICI
+                edgeSymbol: ['none', 'arrow'], // CORRECTION ICI
+                edgeSymbolSize: [0, 10]
             }}]
         }};
         myChart.setOption(option);
     </script></body></html>
     """
-    with open(fichier_sortie, 'w', encoding='utf-8') as f: f.write(html)
-    print("Arbre généré !")
+    
+    with open(fichier_sortie, 'w', encoding='utf-8') as f: 
+        f.write(html)
+    print(f"Timeline générée : {fichier_sortie}")
 
 if __name__ == "__main__": 
-    generer_arbre("Data_of_studies/etude3.json", "Visualisation/arbre3.html")
-    generer_arbre("Data_of_studies/etude4.json", "Visualisation/arbre4.html")
+    generer_graphe_temporel("Data_of_studies/etude8.json", "Visualisation/arbre8.html")
+    #generer_graphe_temporel("Data_of_studies/etude4.json", "Visualisation/arbre4.2.html")
