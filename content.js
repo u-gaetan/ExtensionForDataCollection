@@ -3,31 +3,27 @@ let timeSpentOnPageMs = 0;
 let lastFocusTime = Date.now();
 let isPageVisible = true;
 
-// 1. CHRONOMÈTRE INTELLIGENT (Pause quand on change d'onglet)
+// 1. CHRONOMÈTRE ET SCROLL
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'hidden') {
         isPageVisible = false;
         timeSpentOnPageMs += (Date.now() - lastFocusTime);
-        envoyerStatsPage(); // Envoie les stats à chaque fois qu'on quitte l'onglet
+        envoyerStatsPage();
     } else {
         isPageVisible = true;
-        lastFocusTime = Date.now(); // Reprend le chrono
+        lastFocusTime = Date.now();
     }
 });
 
-// 2. PROFONDEUR DE SCROLL
 document.addEventListener('scroll', function() {
     let docHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
     let windowHeight = window.innerHeight;
     let scrollPos = window.scrollY + windowHeight;
     let scrollPercent = Math.round((scrollPos / docHeight) * 100);
-    
-    if (scrollPercent > maxScrollPercent) {
-        maxScrollPercent = scrollPercent;
-    }
+    if (scrollPercent > maxScrollPercent) maxScrollPercent = scrollPercent;
 });
 
-// 3. CAPTURE DES CLICS
+// 2. CLICS
 document.addEventListener('mousedown', function(event) {
     chrome.runtime.sendMessage({
         type: 'clic',
@@ -37,7 +33,41 @@ document.addEventListener('mousedown', function(event) {
     });
 });
 
-// 4. RÉCEPTION D'ORDRE DU POPUP (Pour forcer l'envoi juste avant le téléchargement)
+// 3. CTRL+C 
+document.addEventListener('copy', function(event) {
+    let copiedText = document.getSelection().toString();
+    
+    // Si la sélection est vide, on cherche si l'utilisateur copie depuis un champ de texte (ex: barre Google)
+    if (!copiedText && event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+        copiedText = event.target.value.substring(event.target.selectionStart, event.target.selectionEnd);
+    }
+    
+    if (copiedText && copiedText.length > 0) {
+        chrome.runtime.sendMessage({
+            type: 'copie',
+            texte: copiedText,
+            url: window.location.href,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// 4. FRAPPE CLAVIER (NOUVEAU)
+// 'change' se déclenche quand on a fini de taper et qu'on valide (Entrée ou clic ailleurs)
+document.addEventListener('change', function(event) {
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+        // SÉCURITÉ : Ne jamais enregistrer un mot de passe
+        if (event.target.type !== 'password' && event.target.value.trim().length > 0) {
+            chrome.runtime.sendMessage({
+                type: 'saisie_clavier',
+                texte: event.target.value,
+                url: window.location.href,
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+});
+
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === "force_save_stats") {
         if (isPageVisible) {
@@ -50,9 +80,8 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 function envoyerStatsPage() {
     chrome.runtime.sendMessage({
-        type: 'page_quittee',
-        url: window.location.href,
-        maxScroll: Math.min(maxScrollPercent, 100), // Bloque à 100% maximum
+        type: 'page_quittee', url: window.location.href,
+        maxScroll: Math.min(maxScrollPercent, 100),
         temps_passe_ms: timeSpentOnPageMs,
         timestamp: new Date().toISOString()
     });

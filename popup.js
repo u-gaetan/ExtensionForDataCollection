@@ -5,6 +5,7 @@ chrome.storage.local.get(['isTracking'], function(result) {
     updateButtonVisuals(result.isTracking || false);
 });
 
+
 toggleBtn.addEventListener('click', () => {
     chrome.storage.local.get(['isTracking'], function(result) {
         let newState = !(result.isTracking || false);
@@ -15,9 +16,12 @@ toggleBtn.addEventListener('click', () => {
                     let confirmClear = confirm("⚠️ Démarrer une nouvelle session effacera les données précédentes. Continuer ?");
                     if (!confirmClear) return;
                 }
-                // Si l'utilisateur confirme, on efface ET on lance la collecte seulement après
+                
+                // On efface, PUIS on initialise la racine, PUIS on lance !
                 chrome.runtime.sendMessage({ action: "clear_data" }, () => {
-                    changerEtat(newState);
+                    chrome.runtime.sendMessage({ action: "start_tracking" }, () => {
+                        changerEtat(newState);
+                    });
                 });
             });
         } else {
@@ -25,7 +29,6 @@ toggleBtn.addEventListener('click', () => {
         }
     });
 });
-
 function changerEtat(state) {
     chrome.storage.local.set({ isTracking: state }, () => updateButtonVisuals(state));
 }
