@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 def extraire_nom_court(url):
     try:
         if url.startswith('chrome://'): return 'Nouvel onglet'
-        if 'google.' in url and '/search' in url: return '🔍 Recherche Google'
+        if 'google.' in url and '/search' in url: return 'Recherche Google'
         parsed = urlparse(url)
         domaine = parsed.netloc.replace('www.', '')
         return domaine if domaine else url[:20] + '...'
@@ -15,7 +15,7 @@ def extraire_nom_court(url):
 
 def generer_symbole_svg(has_clic, has_copy, has_keyb, is_back=False, is_closed=False):
     colors = []
-    if has_clic: colors.append("#ec4899")
+    if has_clic: colors.append("#ffef11e6")
     if has_copy: colors.append("#22c55e")
     if has_keyb: colors.append("#f59e0b")
     if len(colors) == 0: colors = ["#3b82f6"]
@@ -156,27 +156,27 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
         # Nom du noeud avec indicateurs
         name = extraire_nom_court(visit['url'])
         if visit.get('is_back_forward'):
-            name = "↩️ " + name
+            name = "" + name
         if visit.get('tab_closed'):
-            name = name + " 🚪"
+            name = name + ""
 
         # Tooltip
         tooltip = f"""
         <div style='max-width:320px; white-space:normal; padding:5px; font-family:sans-serif;'>
             <b style='color:#3b82f6; font-size:13px; word-wrap:break-word;'>{url_affichage}</b><hr style='border:1px solid #334155; margin:8px 0;'>"""
         if visit.get('is_back_forward'):
-            tooltip += "<b style='color:#f97316;'>↩️ Navigation retour (bouton précédent)</b><br/>"
+            tooltip += "<b style='color:#f97316;'> Navigation retour (bouton précédent)</b><br/>"
         if visit.get('tab_closed'):
-            tooltip += "<b style='color:#ef4444;'>🚪 Onglet fermé après cette page</b><br/>"
-        tooltip += f"""🕒 Ouvert à : <b>{heure}</b><br/>
-            ⏳ Temps : <b>{temps_sec} sec</b> | ⬇️ Scroll : <b>{visit['maxScroll']}%</b><br/>
-            🖱️ Clics : <b>{visit['clics']}</b><br/>"""
+            tooltip += "<b style='color:#ef4444;'> Onglet fermé après cette page</b><br/>"
+        tooltip += f""" Ouvert à : <b>{heure}</b><br/>
+            Temps : <b>{temps_sec} sec</b> | Scroll : <b>{visit['maxScroll']}%</b><br/>
+            Clics : <b>{visit['clics']}</b><br/>"""
         if visit['textes_tapes']:
-            tooltip += f"<br/>⌨️ <b style='color:#f59e0b;'>{len(visit['textes_tapes'])} saisie(s) :</b><br/>"
+            tooltip += f"<br/><b style='color:#f59e0b;'>{len(visit['textes_tapes'])} saisie(s) :</b><br/>"
             for t_txt in visit['textes_tapes'][:3]:
                 tooltip += f"<span style='font-size:12px; color:#cbd5e1;'>- \"<i>{t_txt[:40]}...</i>\"</span><br/>"
         if visit['textes_copies']:
-            tooltip += f"<br/>📋 <b style='color:#22c55e;'>{len(visit['textes_copies'])} copie(s) :</b><br/>"
+            tooltip += f"<br/><b style='color:#22c55e;'>{len(visit['textes_copies'])} copie(s) :</b><br/>"
             for t_txt in visit['textes_copies'][:3]:
                 tooltip += f"<span style='font-size:12px; color:#cbd5e1;'>- \"<i>{t_txt[:40]}...</i>\"</span><br/>"
         tooltip += f"<br/><a href='{visit['url']}' target='_blank' style='display:inline-block; background:#3b82f6; color:white; padding:5px 10px; border-radius:4px; text-decoration:none; margin-top:5px;'>Ouvrir la page</a></div>"
@@ -219,9 +219,9 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
     <style>body {{ margin: 0; background:#f8fafc; font-family: sans-serif; overflow: hidden; }} #chart {{ width: 100vw; height: 100vh; }} #header {{ position: absolute; top: 10px; left: 20px; z-index: 10; background: rgba(255,255,255,0.95); padding: 12px 16px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); line-height: 1.6; }}</style>
     </head><body><div id="header">
     <b>Légende (Couleurs des nœuds) :</b><br/>
-    <span style="color:#3b82f6;">🔵 Aucune action</span> | <span style="color:#ec4899;">🩷 Clics</span> | <span style="color:#f59e0b;">🟠 Clavier</span> | <span style="color:#22c55e;">🟢 Texte copié</span><br/>
+    <span style="color:#3b82f6;">🔵 Aucune action</span> | <span style="color:#ffef11e6;">🟡 Clics</span> | <span style="color:#f59e0b;">🟠 Clavier</span> | <span style="color:#22c55e;">🟢 Texte copié</span><br/>
     <b>Indicateurs spéciaux :</b><br/>
-    <span style="color:#f97316;">↩️ Retour arrière (bordure orange pointillée)</span> | <span style="color:#ef4444;">🚪 Onglet fermé (bordure rouge)</span><br/>
+    <span style="color:#f97316;">↩ Retour arrière (bordure orange pointillée)</span> | <span style="color:#ef4444;">Onglet fermé (bordure rouge)</span><br/>
     <i>Molette = zoom, glisser = déplacer</i>
     </div><div id="chart"></div>
     <script>var myChart = echarts.init(document.getElementById('chart')); myChart.setOption({{ tooltip: {{ trigger: 'item', enterable: true, backgroundColor: 'rgba(15, 23, 42, 0.95)', textStyle: {{ color: '#fff' }}, formatter: info => info.data.tooltipDetails || info.name }}, series:[{{ type: 'graph', layout: 'none', data: {json.dumps(nodes, ensure_ascii=False)}, links: {json.dumps(links)}, roam: true, edgeSymbol:['none', 'arrow'], edgeSymbolSize: [0, 10] }}] }});</script></body></html>"""
@@ -231,4 +231,4 @@ def generer_graphe_temporel(fichier_entree, fichier_sortie):
     print(f"✅ Arbre généré : {fichier_sortie}")
 
 if __name__ == "__main__":
-    generer_graphe_temporel("Data_of_studies/etude20.json", "Visualisation/arbre20.html")
+    generer_graphe_temporel("Data_of_studies/etude20.json", "Visualisation/arbre20_new.html")

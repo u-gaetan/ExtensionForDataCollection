@@ -13,7 +13,7 @@ toggleBtn.addEventListener('click', () => {
         if (newState === true) {
             chrome.runtime.sendMessage({ action: "get_data" }, function(response) {
                 if (response && response.data && response.data.length > 0) {
-                    let confirmClear = confirm("⚠️ Démarrer une nouvelle session effacera les données précédentes. Continuer ?");
+                    let confirmClear = confirm("Démarrer une nouvelle session effacera les données précédentes. Continuer ?");
                     if (!confirmClear) return;
                 }
                 
