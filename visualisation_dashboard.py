@@ -71,9 +71,13 @@ def generer_dashboard(fichier_entree, fichier_sortie):
     # ====================================================
     # ETAPE 1 : Agregation par visitId
     # ====================================================
+        # ====================================================
+    # ETAPE 1 : Agregation par visitId + detection retour algorithmique
+    # ====================================================
     visites = []
     visit_by_id = {}
     dernier_chrono = None
+    tab_nav_history = {}   # tabId → [liste ordonnee des visites de cet onglet]
 
     for log in logs:
         t = log.get('type')
@@ -81,11 +85,22 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         vid = log.get('visitId')
 
         if t == 'navigation':
+            tab_id = log.get('tabId')
+
+            # --- Detection retour arriere algorithmique ---
+            is_back = log.get('transitionType') == 'back_forward'   # si le navigateur l'a capte
+            if not is_back and tab_id and tab_id in tab_nav_history:
+                hist = tab_nav_history[tab_id]
+                # hist[-1] = page actuelle (B), hist[-2] = page d'avant (A)
+                # si on navigue vers A → c'est un retour
+                if len(hist) >= 2 and hist[-2]['url'] == url:
+                    is_back = True
+
             v = {
                 'id': len(visites), 'url': url, 'visitId': vid,
                 'parentUrl': log.get('parentUrl', ''),
-                'tabId': log.get('tabId'),
-                'is_back': log.get('transitionType') == 'back_forward',
+                'tabId': tab_id,
+                'is_back': is_back,
                 'timestamp': log.get('timestamp'),
                 'clics': 0, 'maxScroll': 0, 'temps_ms': 0,
                 'copies': [], 'saisies': [], 'tab_closed': False,
@@ -96,6 +111,12 @@ def generer_dashboard(fichier_entree, fichier_sortie):
             if vid:
                 visit_by_id[vid] = v
             dernier_chrono = v
+
+            # Ajouter a l'historique de l'onglet
+            if tab_id:
+                if tab_id not in tab_nav_history:
+                    tab_nav_history[tab_id] = []
+                tab_nav_history[tab_id].append(v)
 
         elif t == 'tab_closed':
             tid = log.get('tabId')
