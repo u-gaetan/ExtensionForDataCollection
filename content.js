@@ -1,13 +1,208 @@
-// On écoute chaque clic sur la page web
-document.addEventListener('click', function(event) {
-    const data = {
+let currentVisitId = null;
+let maxScrollPercent = 0;
+let timeSpentOnPageMs = 0;
+let lastFocusTime = Date.now();
+let isPageVisible = !document.hidden;
+let alreadySentForThisPage = false;
+let lastSentText = "";
+
+
+// =========================================================
+// AU CHARGEMENT : demander le visitId (bfcache / chargement tardif)
+// =========================================================
+chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
+    if (chrome.runtime.lastError) return;
+    if (response && response.visitId && !currentVisitId) {
+        currentVisitId = response.visitId;
+    }
+});
+
+
+// =========================================================
+// 1. SAUVEGARDE DES STATS
+// =========================================================
+function updateTimeAndSend() {
+    if (alreadySentForThisPage) return;
+    alreadySentForThisPage = true;
+
+    if (isPageVisible) {
+        timeSpentOnPageMs += (Date.now() - lastFocusTime);
+        lastFocusTime = Date.now();
+    }
+
+    chrome.runtime.sendMessage({
+        type: 'page_quittee',
+        visitId: currentVisitId,
+        url: window.location.href,
+        maxScroll: Math.min(maxScrollPercent, 100),
+        temps_passe_ms: timeSpentOnPageMs,
+        timestamp: new Date().toISOString()
+    }).catch(() => {});
+}
+
+
+// =========================================================
+// 2. VISIBILITE / DEPART
+// =========================================================
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === 'hidden') {
+        updateTimeAndSend();
+        isPageVisible = false;
+    } else {
+        isPageVisible = true;
+        alreadySentForThisPage = false;
+        lastFocusTime = Date.now();
+    }
+});
+
+window.addEventListener("pagehide", () => { updateTimeAndSend(); });
+window.addEventListener("beforeunload", () => { updateTimeAndSend(); });
+
+// bfcache : page restauree
+window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+        isPageVisible = true;
+        alreadySentForThisPage = false;
+        lastFocusTime = Date.now();
+        chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
+            if (chrome.runtime.lastError) return;
+            if (response && response.visitId) {
+                currentVisitId = response.visitId;
+            }
+        });
+    }
+});
+
+
+// =========================================================
+// 3. SCROLL
+// =========================================================
+document.addEventListener('scroll', function() {
+    let docHeight = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+    );
+    let scrollPos = window.scrollY + window.innerHeight;
+    let pct = Math.round((scrollPos / docHeight) * 100);
+    if (pct > maxScrollPercent) maxScrollPercent = pct;
+});
+
+
+// =========================================================
+// 4. CLICS
+// =========================================================
+document.addEventListener('mousedown', function(event) {
+    chrome.runtime.sendMessage({
         type: 'clic',
-        x: event.clientX, // Coordonnée X
-        y: event.clientY, // Coordonnée Y
-        url: window.location.href, // L'adresse du site web
-        timestamp: new Date().toISOString() // L'heure exacte
-    };
-    
-    // On envoie ces données au "cerveau" de l'extension (background.js)
-    chrome.runtime.sendMessage(data);
+        visitId: currentVisitId,
+        x: event.clientX,
+        y: event.clientY,
+        url: window.location.href,
+        timestamp: new Date().toISOString()
+    }).catch(() => {});
+});
+
+
+// =========================================================
+// 5. COPIE
+// =========================================================
+document.addEventListener('copy', function(event) {
+    let txt = document.getSelection().toString();
+    if (!txt && event.target &&
+        (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+        txt = event.target.value.substring(
+            event.target.selectionStart, event.target.selectionEnd
+        );
+    }
+    if (txt && txt.trim().length > 0) {
+        chrome.runtime.sendMessage({
+            type: 'copie',
+            visitId: currentVisitId,
+            texte: txt,
+            url: window.location.href,
+            timestamp: new Date().toISOString()
+        }).catch(() => {});
+    }
+});
+
+
+// =========================================================
+// 6. SAISIE CLAVIER
+// =========================================================
+function envoyerTexte(text) {
+    if (!text || !text.trim() || text.trim() === lastSentText) return;
+    lastSentText = text.trim();
+    chrome.runtime.sendMessage({
+        type: 'saisie_clavier',
+        visitId: currentVisitId,
+        texte: text.trim(),
+        url: window.location.href,
+        timestamp: new Date().toISOString()
+    }).catch(() => {});
+}
+
+document.addEventListener('focusout', function(event) {
+    const el = event.target;
+    if (!el) return;
+    let text = '';
+    if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'password') {
+        text = el.value;
+    } else if (el.isContentEditable) {
+        text = el.textContent;
+    }
+    if (text) envoyerTexte(text);
+}, true);
+
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Enter' && event.target) {
+        const el = event.target;
+        let text = '';
+        if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'password') {
+            text = el.value;
+        } else if (el.isContentEditable) {
+            text = el.textContent;
+        }
+        if (text) envoyerTexte(text);
+    }
+});
+
+
+// =========================================================
+// 7. MESSAGES DU BACKGROUND
+// =========================================================
+chrome.runtime.onMessage.addListener((msg) => {
+
+    if (msg.action === "url_changed") {
+        // Anti-doublon (retries du background)
+        if (currentVisitId === msg.visitId) return;
+
+        // Sauvegarder l'ancienne page
+        if (currentVisitId) {
+            const activeEl = document.activeElement;
+            if (activeEl) {
+                let text = '';
+                if ((activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')
+                    && activeEl.type !== 'password') {
+                    text = activeEl.value;
+                } else if (activeEl.isContentEditable) {
+                    text = activeEl.textContent;
+                }
+                if (text) envoyerTexte(text);
+            }
+            updateTimeAndSend();
+        }
+
+        // Reset pour la nouvelle page
+        alreadySentForThisPage = false;
+        currentVisitId = msg.visitId;
+        maxScrollPercent = 0;
+        timeSpentOnPageMs = 0;
+        lastFocusTime = Date.now();
+        lastSentText = "";
+    }
+
+    if (msg.action === "force_save_stats") {
+        alreadySentForThisPage = false;
+        updateTimeAndSend();
+    }
 });
