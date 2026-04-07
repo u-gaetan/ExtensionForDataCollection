@@ -1,96 +1,123 @@
 let sessionData = [];
-let tabHistory = {}; 
+let tabHistory = {};
 let isTracking = false;
-let pendingBackForward = {};  // tabId → url (anti-doublon)
+let visitCounter = 0;
+let currentVisitByTab = {};
 
-chrome.storage.local.get(['isTracking'], (res) => { isTracking = res.isTracking || false; });
+chrome.storage.local.get(['isTracking'], (res) => {
+    isTracking = res.isTracking || false;
+});
 chrome.storage.onChanged.addListener((changes) => {
     if (changes.isTracking) isTracking = changes.isTracking.newValue;
 });
 
-let visitCounter = 0;
-let currentVisitByTab = {};  // tabId → visitId actuel
 
-// =============================================
-// NAVIGATION 
-// =============================================
+// =========================================================
+// NAVIGATION PRINCIPALE : onUpdated (fiable pour tout)
+// =========================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (!isTracking || !changeInfo.url) return;
 
-    // ← NOUVEAU : Skip si déjà géré par onCommitted (back_forward)
-    if (pendingBackForward[tabId] === changeInfo.url) {
-        delete pendingBackForward[tabId];
-        return;
-    }
-
-    const currentUrl = changeInfo.url;
+    const url = changeInfo.url;
+    const previousVisitId = currentVisitByTab[tabId];
     const visitId = `visit_${++visitCounter}`;
     currentVisitByTab[tabId] = visitId;
 
-    let parentUrl = tabHistory[tabId] ||
-        (tab.openerTabId ? tabHistory[tab.openerTabId] : "Ouverture directe / Nouvel onglet");
+    let parentUrl = tabHistory[tabId]
+        || (tab.openerTabId ? tabHistory[tab.openerTabId] : null)
+        || "Ouverture directe / Nouvel onglet";
 
     sessionData.push({
         type: 'navigation',
         visitId: visitId,
-        url: currentUrl,
+        url: url,
         parentUrl: parentUrl,
         tabId: tabId,
         timestamp: new Date().toISOString()
+        // transitionType sera ajouté par onCommitted si c'est un retour
     });
 
-    tabHistory[tabId] = currentUrl;
+    // --- Extraction q= Google → saisie sur le parent newtab ---
+    if (url.includes('google.') && url.includes('/search')) {
+        try {
+            const q = new URL(url).searchParams.get('q');
+            if (q && previousVisitId && parentUrl && parentUrl.startsWith('chrome://')) {
+                sessionData.push({
+                    type: 'saisie_clavier',
+                    visitId: previousVisitId,
+                    texte: q,
+                    url: parentUrl,
+                    source: 'recherche_omnibox',
+                    tabId: tabId,
+                    timestamp: new Date().toISOString()
+                });
+            }
+        } catch (e) {}
+    }
 
-    chrome.tabs.sendMessage(tabId, {
-        action: "url_changed",
-        newUrl: currentUrl,
-        visitId: visitId,
-    }).catch(() => {});
+    tabHistory[tabId] = url;
+
+    // Envoi url_changed avec retries
+    function sendUrlChanged() {
+        chrome.tabs.sendMessage(tabId, {
+            action: "url_changed",
+            newUrl: url,
+            visitId: visitId
+        }).catch(() => {});
+    }
+    sendUrlChanged();
+    setTimeout(sendUrlChanged, 150);
+    setTimeout(sendUrlChanged, 500);
 });
 
-// =============================================
-// BOUTON RETOUR / AVANCE (remplacer votre version actuelle)
-// =============================================
+
+// =========================================================
+// RETOUR ARRIERE : onCommitted tague RETROACTIVEMENT
+// Il cherche le dernier event navigation de ce tab et ajoute transitionType
+// =========================================================
 chrome.webNavigation.onCommitted.addListener((details) => {
     if (!isTracking || details.frameId !== 0) return;
     if (details.transitionType !== "back_forward") return;
 
     const tabId = details.tabId;
-    const currentUrl = details.url;
-    const visitId = `visit_${++visitCounter}`;
-    currentVisitByTab[tabId] = visitId;
+    const url = details.url;
 
-    // Marquer pour éviter le doublon avec onUpdated
-    pendingBackForward[tabId] = currentUrl;
-    setTimeout(() => { delete pendingBackForward[tabId]; }, 1500);
+    // Chercher le dernier evenement navigation de cet onglet
+    // (cree par onUpdated juste avant, ou qui va arriver juste apres)
+    function tagBackForward() {
+        for (let i = sessionData.length - 1; i >= 0; i--) {
+            const ev = sessionData[i];
+            if (ev.type === 'navigation' && ev.tabId === tabId && ev.url === url) {
+                ev.transitionType = "back_forward";
+                return true;
+            }
+            // Ne pas chercher trop loin en arriere
+            if (ev.type === 'navigation' && ev.tabId === tabId && ev.url !== url) {
+                break;
+            }
+        }
+        return false;
+    }
 
-    sessionData.push({
-        type: 'navigation',
-        visitId: visitId,
-        url: currentUrl,
-        parentUrl: tabHistory[tabId] || "Navigation retour",
-        tabId: tabId,
-        transitionType: "back_forward",    // ← Clé pour la visualisation
-        timestamp: new Date().toISOString()
-    });
+    // Essayer immediatement (onUpdated a peut-etre deja tire)
+    if (!tagBackForward()) {
+        // Sinon re-essayer apres un court delai (onUpdated va tirer)
+        setTimeout(() => { tagBackForward(); }, 100);
+        setTimeout(() => { tagBackForward(); }, 300);
+    }
 
-    tabHistory[tabId] = currentUrl;
-
+    // Forcer la sauvegarde des stats de la page precedente
     chrome.tabs.sendMessage(tabId, {
-        action: "url_changed",
-        newUrl: currentUrl,
-        visitId: visitId,
+        action: "force_save_stats"
     }).catch(() => {});
 });
 
 
-
-// =============================================
-// ← NOUVEAU : FERMETURE D'ONGLET
-// =============================================
-chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+// =========================================================
+// FERMETURE D'ONGLET
+// =========================================================
+chrome.tabs.onRemoved.addListener((tabId) => {
     if (!isTracking) return;
-
     sessionData.push({
         type: 'tab_closed',
         visitId: currentVisitByTab[tabId] || null,
@@ -98,15 +125,16 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
         url: tabHistory[tabId] || "URL inconnue",
         timestamp: new Date().toISOString()
     });
-
     delete currentVisitByTab[tabId];
     delete tabHistory[tabId];
 });
 
-// =============================================
-// MESSAGES ENTRANTS (content scripts + popup)
-// =============================================
+
+// =========================================================
+// MESSAGES
+// =========================================================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
     if (message.action === "get_data") {
         sendResponse({ data: sessionData });
         return true;
@@ -121,31 +149,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    // Démarrage : enregistre la page actuelle comme racine
+    if (message.action === "get_visit_id") {
+        const tabId = sender.tab ? sender.tab.id : null;
+        sendResponse({
+            visitId: tabId ? (currentVisitByTab[tabId] || null) : null
+        });
+        return true;
+    }
+
     if (message.action === "start_tracking") {
-        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+        chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
             if (tabs.length > 0) {
                 const tab = tabs[0];
                 const currentUrl = tab.url || "URL Inconnue";
-                const visitId = `visit_${++visitCounter}`;   // ← visitId pour la racine aussi
+                const visitId = `visit_${++visitCounter}`;
                 currentVisitByTab[tab.id] = visitId;
 
                 sessionData.push({
                     type: 'navigation',
                     visitId: visitId,
                     url: currentUrl,
-                    parentUrl: "Démarrage de l'expérience",
+                    parentUrl: "Demarrage de l'experience",
                     tabId: tab.id,
                     timestamp: new Date().toISOString()
                 });
 
                 tabHistory[tab.id] = currentUrl;
-
-                // Prévenir le content script de la page de départ
-                chrome.tabs.sendMessage(tab.id, { 
-                    action: "url_changed", 
+                chrome.tabs.sendMessage(tab.id, {
+                    action: "url_changed",
                     newUrl: currentUrl,
-                    visitId: visitId,
+                    visitId: visitId
                 }).catch(() => {});
             }
             sendResponse({ success: true });
@@ -153,12 +186,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    // Pour tout autre message (clic, copie, saisie, page_quittee...)
+    // Content scripts : clic, copie, saisie, page_quittee
     if (isTracking && message.type) {
-        // Injection du tabId depuis le sender
         if (sender.tab && sender.tab.id) {
             message.tabId = sender.tab.id;
-            // Si le content script n'a pas de visitId, on injecte celui qu'on connaît
             if (!message.visitId && currentVisitByTab[sender.tab.id]) {
                 message.visitId = currentVisitByTab[sender.tab.id];
             }

@@ -1,12 +1,26 @@
-let currentVisitId = null;            // ← DÉCLARATION manquante
+let currentVisitId = null;
 let maxScrollPercent = 0;
 let timeSpentOnPageMs = 0;
 let lastFocusTime = Date.now();
-let isPageVisible = true;
-let pendingText = "";
+let isPageVisible = !document.hidden;
 let alreadySentForThisPage = false;
+let lastSentText = "";
 
-// --- 1. FONCTION DE SAUVEGARDE FINALE ---
+
+// =========================================================
+// AU CHARGEMENT : demander le visitId (bfcache / chargement tardif)
+// =========================================================
+chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
+    if (chrome.runtime.lastError) return;
+    if (response && response.visitId && !currentVisitId) {
+        currentVisitId = response.visitId;
+    }
+});
+
+
+// =========================================================
+// 1. SAUVEGARDE DES STATS
+// =========================================================
 function updateTimeAndSend() {
     if (alreadySentForThisPage) return;
     alreadySentForThisPage = true;
@@ -15,7 +29,7 @@ function updateTimeAndSend() {
         timeSpentOnPageMs += (Date.now() - lastFocusTime);
         lastFocusTime = Date.now();
     }
-    
+
     chrome.runtime.sendMessage({
         type: 'page_quittee',
         visitId: currentVisitId,
@@ -26,67 +40,95 @@ function updateTimeAndSend() {
     }).catch(() => {});
 }
 
-// --- 2. DÉTECTION DU DÉPART DE L'UTILISATEUR ---
+
+// =========================================================
+// 2. VISIBILITE / DEPART
+// =========================================================
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'hidden') {
         updateTimeAndSend();
         isPageVisible = false;
     } else {
-        // Retour sur l'onglet → on ré-autorise un futur envoi
         isPageVisible = true;
-        alreadySentForThisPage = false;   // ← Important pour re-capturer si re-départ
+        alreadySentForThisPage = false;
         lastFocusTime = Date.now();
     }
 });
 
-window.addEventListener("pagehide", () => {
-    updateTimeAndSend();
+window.addEventListener("pagehide", () => { updateTimeAndSend(); });
+window.addEventListener("beforeunload", () => { updateTimeAndSend(); });
+
+// bfcache : page restauree
+window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+        isPageVisible = true;
+        alreadySentForThisPage = false;
+        lastFocusTime = Date.now();
+        chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
+            if (chrome.runtime.lastError) return;
+            if (response && response.visitId) {
+                currentVisitId = response.visitId;
+            }
+        });
+    }
 });
 
-window.addEventListener("beforeunload", () => {
-    updateTimeAndSend();
-});
 
-// --- 3. PROFONDEUR DE SCROLL ---
+// =========================================================
+// 3. SCROLL
+// =========================================================
 document.addEventListener('scroll', function() {
-    let docHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+    let docHeight = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+    );
     let scrollPos = window.scrollY + window.innerHeight;
-    let scrollPercent = Math.round((scrollPos / docHeight) * 100);
-    if (scrollPercent > maxScrollPercent) maxScrollPercent = scrollPercent;
+    let pct = Math.round((scrollPos / docHeight) * 100);
+    if (pct > maxScrollPercent) maxScrollPercent = pct;
 });
 
-// --- 4. CAPTURE DES CLICS ---
+
+// =========================================================
+// 4. CLICS
+// =========================================================
 document.addEventListener('mousedown', function(event) {
     chrome.runtime.sendMessage({
         type: 'clic',
         visitId: currentVisitId,
-        x: event.clientX, 
+        x: event.clientX,
         y: event.clientY,
         url: window.location.href,
         timestamp: new Date().toISOString()
     }).catch(() => {});
 });
 
-// --- 5. CTRL+C ---
+
+// =========================================================
+// 5. COPIE
+// =========================================================
 document.addEventListener('copy', function(event) {
-    let copiedText = document.getSelection().toString();
-    if (!copiedText && event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
-        copiedText = event.target.value.substring(event.target.selectionStart, event.target.selectionEnd);
+    let txt = document.getSelection().toString();
+    if (!txt && event.target &&
+        (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+        txt = event.target.value.substring(
+            event.target.selectionStart, event.target.selectionEnd
+        );
     }
-    if (copiedText && copiedText.trim().length > 0) {
+    if (txt && txt.trim().length > 0) {
         chrome.runtime.sendMessage({
-            type: 'copie', 
-            visitId: currentVisitId, 
-            texte: copiedText, 
-            url: window.location.href, 
+            type: 'copie',
+            visitId: currentVisitId,
+            texte: txt,
+            url: window.location.href,
             timestamp: new Date().toISOString()
         }).catch(() => {});
     }
 });
 
-// --- 6. FRAPPE CLAVIER (refonte) ---
-let lastSentText = "";
 
+// =========================================================
+// 6. SAISIE CLAVIER
+// =========================================================
 function envoyerTexte(text) {
     if (!text || !text.trim() || text.trim() === lastSentText) return;
     lastSentText = text.trim();
@@ -99,7 +141,6 @@ function envoyerTexte(text) {
     }).catch(() => {});
 }
 
-// Envoi quand un champ perd le focus (INPUT, TEXTAREA, contenteditable)
 document.addEventListener('focusout', function(event) {
     const el = event.target;
     if (!el) return;
@@ -112,7 +153,6 @@ document.addEventListener('focusout', function(event) {
     if (text) envoyerTexte(text);
 }, true);
 
-// Envoi immédiat sur Enter (avant que la page ne navigue)
 document.addEventListener('keydown', function(event) {
     if (event.key === 'Enter' && event.target) {
         const el = event.target;
@@ -126,17 +166,23 @@ document.addEventListener('keydown', function(event) {
     }
 });
 
-// --- 7. MESSAGES DU BACKGROUND ---
+
+// =========================================================
+// 7. MESSAGES DU BACKGROUND
+// =========================================================
 chrome.runtime.onMessage.addListener((msg) => {
+
     if (msg.action === "url_changed") {
-        // 1. Sauvegarder l'ancienne page (seulement si on avait un visitId)
+        // Anti-doublon (retries du background)
+        if (currentVisitId === msg.visitId) return;
+
+        // Sauvegarder l'ancienne page
         if (currentVisitId) {
-            // ← IMPORTANT : envoyer le texte AVANT le reset
             const activeEl = document.activeElement;
             if (activeEl) {
                 let text = '';
-                if ((activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') 
-                     && activeEl.type !== 'password') {
+                if ((activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')
+                    && activeEl.type !== 'password') {
                     text = activeEl.value;
                 } else if (activeEl.isContentEditable) {
                     text = activeEl.textContent;
@@ -146,22 +192,17 @@ chrome.runtime.onMessage.addListener((msg) => {
             updateTimeAndSend();
         }
 
-        // 2. Reset complet pour la nouvelle page
+        // Reset pour la nouvelle page
         alreadySentForThisPage = false;
         currentVisitId = msg.visitId;
         maxScrollPercent = 0;
         timeSpentOnPageMs = 0;
         lastFocusTime = Date.now();
-        lastSentText = "";  // ← Reset du dernier texte envoyé
+        lastSentText = "";
     }
 
     if (msg.action === "force_save_stats") {
         alreadySentForThisPage = false;
-        const activeEl = document.activeElement;
-        if (activeEl) {
-            let text = activeEl.value || activeEl.textContent;
-            if (text) envoyerTexte(text);
-        }
         updateTimeAndSend();
     }
 });
