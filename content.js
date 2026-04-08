@@ -14,14 +14,38 @@ chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
     if (chrome.runtime.lastError) return;
     if (response && response.visitId && !currentVisitId) {
         currentVisitId = response.visitId;
+        // 🔧 FIX BUG 6 : calculer le scroll initial dès qu'on a le visitId
+        recalculateScroll();
     }
 });
+
+
+// =========================================================
+// 🔧 FIX BUG 6 : Fonction de recalcul du scroll
+//    → utilisée au chargement ET au retour bfcache
+//    → résout scroll=0 sur les pages restaurées
+// =========================================================
+function recalculateScroll() {
+    let docHeight = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+    );
+    if (docHeight === 0) return;
+    let scrollPos = window.scrollY + window.innerHeight;
+    let pct = Math.round((scrollPos / docHeight) * 100);
+    if (pct > maxScrollPercent) maxScrollPercent = pct;
+}
 
 
 // =========================================================
 // 1. SAUVEGARDE DES STATS
 // =========================================================
 function updateTimeAndSend() {
+    console.log("💾 updateTimeAndSend | visitId=", currentVisitId,
+                "| scroll=", maxScrollPercent,
+                "| temps=", timeSpentOnPageMs,
+                "| déjà envoyé=", alreadySentForThisPage);
+
     if (alreadySentForThisPage) return;
     alreadySentForThisPage = true;
 
@@ -29,6 +53,9 @@ function updateTimeAndSend() {
         timeSpentOnPageMs += (Date.now() - lastFocusTime);
         lastFocusTime = Date.now();
     }
+
+    // 🔧 FIX : ne pas envoyer si pas de visitId (content script orphelin)
+    if (!currentVisitId) return;
 
     chrome.runtime.sendMessage({
         type: 'page_quittee',
@@ -42,7 +69,7 @@ function updateTimeAndSend() {
 
 
 // =========================================================
-// 2. VISIBILITE / DEPART
+// 2. VISIBILITÉ / DÉPART
 // =========================================================
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'hidden') {
@@ -58,12 +85,18 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pagehide", () => { updateTimeAndSend(); });
 window.addEventListener("beforeunload", () => { updateTimeAndSend(); });
 
-// bfcache : page restauree
+// 🔧 FIX BUG 6 : bfcache — page restaurée
+//    → recalculer le scroll (bfcache restaure la position mais ne fire pas scroll)
+//    → reset du temps (c'est un nouveau visit)
 window.addEventListener("pageshow", (event) => {
     if (event.persisted) {
         isPageVisible = true;
         alreadySentForThisPage = false;
         lastFocusTime = Date.now();
+        timeSpentOnPageMs = 0;       // 🔧 Nouveau visit → temps repart à 0
+        maxScrollPercent = 0;         // 🔧 Reset avant recalcul
+        recalculateScroll();          // 🔧 Lire la position de scroll restaurée
+
         chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
             if (chrome.runtime.lastError) return;
             if (response && response.visitId) {
@@ -82,6 +115,7 @@ document.addEventListener('scroll', function() {
         document.documentElement.scrollHeight,
         document.body.scrollHeight
     );
+    if (docHeight === 0) return; // 🔧 Protection division par zéro
     let scrollPos = window.scrollY + window.innerHeight;
     let pct = Math.round((scrollPos / docHeight) * 100);
     if (pct > maxScrollPercent) maxScrollPercent = pct;
@@ -92,6 +126,7 @@ document.addEventListener('scroll', function() {
 // 4. CLICS
 // =========================================================
 document.addEventListener('mousedown', function(event) {
+    if (!currentVisitId) return; // 🔧 Protection : pas de visitId = pas de tracking
     chrome.runtime.sendMessage({
         type: 'clic',
         visitId: currentVisitId,
@@ -107,6 +142,7 @@ document.addEventListener('mousedown', function(event) {
 // 5. COPIE
 // =========================================================
 document.addEventListener('copy', function(event) {
+    if (!currentVisitId) return; // 🔧 Protection
     let txt = document.getSelection().toString();
     if (!txt && event.target &&
         (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
@@ -130,6 +166,7 @@ document.addEventListener('copy', function(event) {
 // 6. SAISIE CLAVIER
 // =========================================================
 function envoyerTexte(text) {
+    if (!currentVisitId) return; // 🔧 Protection
     if (!text || !text.trim() || text.trim() === lastSentText) return;
     lastSentText = text.trim();
     chrome.runtime.sendMessage({
@@ -173,11 +210,14 @@ document.addEventListener('keydown', function(event) {
 chrome.runtime.onMessage.addListener((msg) => {
 
     if (msg.action === "url_changed") {
-        // Anti-doublon (retries du background)
+        console.log("📨 url_changed reçu | ancien visitId=", currentVisitId, "| nouveau=", msg.visitId);
+
+        // Anti-doublon : même visitId = retry, on ignore
         if (currentVisitId === msg.visitId) return;
 
         // Sauvegarder l'ancienne page
         if (currentVisitId) {
+            // Récupérer le texte d'un champ actif avant de quitter
             const activeEl = document.activeElement;
             if (activeEl) {
                 let text = '';
@@ -199,10 +239,17 @@ chrome.runtime.onMessage.addListener((msg) => {
         timeSpentOnPageMs = 0;
         lastFocusTime = Date.now();
         lastSentText = "";
+
+        // 🔧 FIX BUG 6 : recalculer le scroll après reset
+        //    (utile si la page est restée scrollée, ex: SPA)
+        setTimeout(recalculateScroll, 50);
     }
 
     if (msg.action === "force_save_stats") {
+        console.log("💪 force_save_stats reçu | visitId=", currentVisitId);
         alreadySentForThisPage = false;
+        // 🔧 FIX : recalculer le scroll une dernière fois
+        recalculateScroll();
         updateTimeAndSend();
     }
 });
