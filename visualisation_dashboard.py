@@ -69,15 +69,14 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         logs = json.load(f)
 
     # ====================================================
-    # ETAPE 1 : Agregation par visitId
-    # ====================================================
-        # ====================================================
-    # ETAPE 1 : Agregation par visitId + detection retour algorithmique
+    # ETAPE 1 : Agregation par visitId + detection back/forward par pile
     # ====================================================
     visites = []
     visit_by_id = {}
     dernier_chrono = None
-    tab_nav_history = {}   # tabId → [liste ordonnee des visites de cet onglet]
+
+    tab_stack = {}
+    tab_pointer = {}
 
     for log in logs:
         t = log.get('type')
@@ -87,13 +86,29 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         if t == 'navigation':
             tab_id = log.get('tabId')
 
-            # --- Detection retour arriere algorithmique ---
-            is_back = log.get('transitionType') == 'back_forward'   # si le navigateur l'a capte
-            if not is_back and tab_id and tab_id in tab_nav_history:
-                hist = tab_nav_history[tab_id]
-                # hist[-1] = page actuelle (B), hist[-2] = page d'avant (A)
-                # si on navigue vers A → c'est un retour
-                if len(hist) >= 2 and hist[-2]['url'] == url:
+            is_back = False
+            is_forward = False
+
+            if tab_id is not None:
+                if tab_id not in tab_stack:
+                    tab_stack[tab_id] = []
+                    tab_pointer[tab_id] = -1
+
+                stack = tab_stack[tab_id]
+                ptr = tab_pointer[tab_id]
+
+                if ptr >= 1 and stack[ptr - 1] == url:
+                    is_back = True
+                    tab_pointer[tab_id] = ptr - 1
+                elif ptr < len(stack) - 1 and stack[ptr + 1] == url:
+                    is_forward = True
+                    tab_pointer[tab_id] = ptr + 1
+                else:
+                    tab_stack[tab_id] = stack[:ptr + 1] + [url]
+                    tab_pointer[tab_id] = ptr + 1
+
+            if log.get('transitionType') == 'back_forward':
+                if not is_back and not is_forward:
                     is_back = True
 
             v = {
@@ -101,6 +116,7 @@ def generer_dashboard(fichier_entree, fichier_sortie):
                 'parentUrl': log.get('parentUrl', ''),
                 'tabId': tab_id,
                 'is_back': is_back,
+                'is_forward': is_forward,
                 'timestamp': log.get('timestamp'),
                 'clics': 0, 'maxScroll': 0, 'temps_ms': 0,
                 'copies': [], 'saisies': [], 'tab_closed': False,
@@ -112,18 +128,16 @@ def generer_dashboard(fichier_entree, fichier_sortie):
                 visit_by_id[vid] = v
             dernier_chrono = v
 
-            # Ajouter a l'historique de l'onglet
-            if tab_id:
-                if tab_id not in tab_nav_history:
-                    tab_nav_history[tab_id] = []
-                tab_nav_history[tab_id].append(v)
-
         elif t == 'tab_closed':
             tid = log.get('tabId')
             for v in reversed(visites):
                 if v.get('tabId') == tid:
                     v['tab_closed'] = True
                     break
+            if tid in tab_stack:
+                del tab_stack[tid]
+            if tid in tab_pointer:
+                del tab_pointer[tid]
 
         elif vid and vid in visit_by_id:
             vi = visit_by_id[vid]
@@ -149,7 +163,7 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         src, curv = None, 0
 
         if v['parentUrl'] and v['parentUrl'] not in (
-                "Démarrage de l'expérience", "Ouverture directe / Nouvel onglet"):
+                "Demarrage de l'experience", "Ouverture directe / Nouvel onglet"):
             for pv in reversed(visites[:v['id']]):
                 if pv['url'] == v['parentUrl']:
                     src = f"n{pv['id']}"
@@ -185,7 +199,9 @@ def generer_dashboard(fichier_entree, fichier_sortie):
                f"<div style='font-weight:600;color:#e2e8f0;word-break:break-all;'>{url_short}</div>"
                f"<div style='border-top:1px solid #334155;margin:8px 0;'></div>")
         if v['is_back']:
-            tip += "<div style='color:#f97316;font-weight:600;margin-bottom:4px;'>Retour arriere (navigation precedente)</div>"
+            tip += "<div style='color:#f97316;font-weight:600;margin-bottom:4px;'>Retour arriere (back)</div>"
+        if v['is_forward']:
+            tip += "<div style='color:#3b82f6;font-weight:600;margin-bottom:4px;'>Navigation avant (forward)</div>"
         if v['tab_closed']:
             tip += "<div style='color:#f87171;font-weight:600;margin-bottom:4px;'>Onglet ferme apres cette page</div>"
         tip += (f"<table style='width:100%;font-size:12px;color:#cbd5e1;'>"
@@ -224,39 +240,98 @@ def generer_dashboard(fichier_entree, fichier_sortie):
             "tooltipDetails": tip
         })
 
+        # --- Aretes avec labels BACK / FWD ---
         if src:
             is_back = v.get('is_back', False)
+            is_forward = v.get('is_forward', False)
+
+            if is_back:
+                edge_color = "#e87623"
+                edge_type = "dashed"
+                edge_width = 2.5
+                edge_label = {
+                    "show": True,
+                    "formatter": "\u21A9 BACK",
+                    "fontSize": 10,
+                    "fontWeight": "bold",
+                    "color": "#fff",
+                    "backgroundColor": "#e87623",
+                    "borderRadius": 3,
+                    "padding": [2, 6],
+                    "fontFamily": "Inter, system-ui, sans-serif"
+                }
+            elif is_forward:
+                edge_color = "#2563eb"
+                edge_type = "dashed"
+                edge_width = 2.5
+                edge_label = {
+                    "show": True,
+                    "formatter": "\u21AA FWD",
+                    "fontSize": 10,
+                    "fontWeight": "bold",
+                    "color": "#fff",
+                    "backgroundColor": "#2563eb",
+                    "borderRadius": 3,
+                    "padding": [2, 6],
+                    "fontFamily": "Inter, system-ui, sans-serif"
+                }
+            else:
+                edge_color = "#94a3b8"
+                edge_type = "solid"
+                edge_width = 1.5
+                edge_label = None
+
             link_obj = {
                 "source": src, "target": nid,
                 "lineStyle": {
                     "curveness": curv,
-                    "color": "#e87623" if is_back else "#94a3b8",
-                    "width": 2.5 if is_back else 1.5,
-                    "type": "dashed" if is_back else "solid"
+                    "color": edge_color,
+                    "width": edge_width,
+                    "type": edge_type
                 }
             }
-            if is_back:
-                link_obj["label"] = {
-                    "show": True,
-                    "formatter": "\u21A9",
-                    "fontSize": 18,
-                    "color": "#e87623",
-                    "fontWeight": "bold",
-                    "backgroundColor": "rgba(255,247,237,0.9)",
-                    "borderColor": "#e87623",
-                    "borderWidth": 1,
-                    "borderRadius": 4,
-                    "padding": [2, 5]
-                }
+            if edge_label:
+                link_obj["label"] = edge_label
             links.append(link_obj)
+
         xi += 1
 
+        # ====================================================
+    # ETAPE 3 : Donnees metriques — REGROUPEES PAR URL (y compris chrome://)
     # ====================================================
-    # ETAPE 3 : Donnees metriques
-    # ====================================================
-    vr = [v for v in visites if not v['url'].startswith('chrome://')]
+    url_order = []
+    url_groups = {}
+    for v in visites:
+        u = v['url']
+        if u not in url_groups:
+            url_order.append(u)
+            url_groups[u] = {
+                'url': u,
+                'nom': v['nom'],
+                'temps_ms': 0,
+                'maxScroll': 0,
+                'clics': 0,
+                'copies': [],
+                'saisies': [],
+                'nb_visites': 0,
+                'back_count': 0,
+                'forward_count': 0,
+                'closed_count': 0,
+            }
+        g = url_groups[u]
+        g['temps_ms'] += v['temps_ms']
+        g['maxScroll'] = max(g['maxScroll'], v['maxScroll'])
+        g['clics'] += v['clics']
+        g['copies'].extend(v['copies'])
+        g['saisies'].extend(v['saisies'])
+        g['nb_visites'] += 1
+        if v.get('is_back'):    g['back_count'] += 1
+        if v.get('is_forward'): g['forward_count'] += 1
+        if v.get('tab_closed'): g['closed_count'] += 1
 
-    labels = [f"#{v['id']+1}  {v['nom']}" for v in vr]
+    vr = [url_groups[u] for u in url_order]
+
+    labels = [v['nom'] for v in vr]
     urls_list = [v['url'] for v in vr]
     temps_data = [round(v['temps_ms'] / 1000, 1) for v in vr]
 
@@ -276,6 +351,7 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         'saisies': sum(len(v['saisies']) for v in visites),
         'temps': sum(v['temps_ms'] for v in visites),
         'back': sum(1 for v in visites if v['is_back']),
+        'forward': sum(1 for v in visites if v['is_forward']),
         'closed': sum(1 for v in visites if v['tab_closed']),
         'tabs': len(set(v['tabId'] for v in visites if v['tabId'])),
         'pages': len(vr)
@@ -291,9 +367,11 @@ def generer_dashboard(fichier_entree, fichier_sortie):
     for v in vr:
         try:
             d = urlparse(v['url']).netloc.replace('www.', '')
+            if not d:
+                d = v['url'].split('://')[0] + '://'
         except:
             d = '?'
-        doms[d] = doms.get(d, 0) + 1
+        doms[d] = doms.get(d, 0) + v['nb_visites']
     doms_sorted = sorted(doms.items(), key=lambda x: x[1], reverse=True)[:10]
     doms_labels = [d[0] for d in doms_sorted]
     doms_values = [d[1] for d in doms_sorted]
@@ -308,27 +386,26 @@ def generer_dashboard(fichier_entree, fichier_sortie):
 
     ch = max(280, len(vr) * 40 + 80)
 
-    # ====================================================
-    # ETAPE 4 : Tableau
+        # ====================================================
+    # ETAPE 4 : Tableau de donnees — REGROUPE PAR URL
     # ====================================================
     rows_html = ""
-    for v in visites:
-        h = ts_to_heure(v['timestamp'])
+    for v in vr:
         url_esc = v['url'].replace("&", "&amp;").replace('"', "&quot;").replace("'", "&#39;")
         tags = ""
-        if v['is_back']:     tags += '<span class="tag tag-orange">Retour</span>'
-        if v['tab_closed']:  tags += '<span class="tag tag-red">Ferme</span>'
-        if v['clics']:       tags += f'<span class="tag tag-indigo">{v["clics"]} clic(s)</span>'
-        if v['copies']:      tags += f'<span class="tag tag-green">{len(v["copies"])} copie(s)</span>'
-        if v['saisies']:     tags += f'<span class="tag tag-amber">{len(v["saisies"])} saisie(s)</span>'
+        if v['back_count']:    tags += f'<span class="tag tag-orange">{v["back_count"]} Back</span>'
+        if v['forward_count']: tags += f'<span class="tag tag-blue">{v["forward_count"]} Fwd</span>'
+        if v['closed_count']:  tags += f'<span class="tag tag-red">{v["closed_count"]} Ferme</span>'
+        if v['clics']:         tags += f'<span class="tag tag-indigo">{v["clics"]} clic(s)</span>'
+        if v['copies']:        tags += f'<span class="tag tag-green">{len(v["copies"])} copie(s)</span>'
+        if v['saisies']:       tags += f'<span class="tag tag-amber">{len(v["saisies"])} saisie(s)</span>'
 
         cp = "; ".join(f'"{t[:30]}"' for t in v['copies']) or "—"
         sa = "; ".join(f'"{t[:30]}"' for t in v['saisies']) or "—"
 
         rows_html += f"""<tr>
-            <td class="cell-mono">{v['visitId'] or '—'}</td>
+            <td class="cell-right">{v['nb_visites']}</td>
             <td><a href="{url_esc}" target="_blank" class="cell-link" title="{url_esc}">{v['nom']}</a></td>
-            <td class="cell-mono">{h}</td>
             <td class="cell-right">{round(v['temps_ms']/1000,1)} s</td>
             <td class="cell-right">{v['maxScroll']}%</td>
             <td class="cell-right">{v['clics']}</td>
@@ -336,6 +413,7 @@ def generer_dashboard(fichier_entree, fichier_sortie):
             <td class="cell-dim">{sa}</td>
             <td>{tags}</td>
         </tr>"""
+
 
     # ====================================================
     # ETAPE 5 : Serialisation
@@ -357,7 +435,6 @@ def generer_dashboard(fichier_entree, fichier_sortie):
 *, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fafc; color:#1e293b; font-size:14px; }}
 
-/* ---- Header ---- */
 .header {{
     background:#1e293b; color:#f1f5f9; padding:18px 28px;
     display:flex; align-items:center; justify-content:space-between;
@@ -365,9 +442,7 @@ body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fa
 }}
 .header h1 {{ font-size:18px; font-weight:700; letter-spacing:-0.3px; }}
 .header-meta {{ font-size:12px; color:#94a3b8; display:flex; gap:18px; margin-top:4px; }}
-.header-meta span {{ display:inline-flex; align-items:center; gap:4px; }}
 
-/* ---- Tabs ---- */
 .tabs {{ display:flex; background:#fff; border-bottom:1px solid #e2e8f0; padding:0 20px; }}
 .tab-btn {{
     padding:12px 20px; border:none; background:none; font-size:13px; font-weight:500;
@@ -380,8 +455,7 @@ body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fa
 .tab-content {{ display:none; padding:24px; }}
 .tab-content.active {{ display:block; }}
 
-/* ---- Stat cards ---- */
-.stats-row {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:24px; }}
+.stats-row {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:24px; }}
 .stat {{
     background:#fff; border:1px solid #e2e8f0; border-radius:8px;
     padding:16px 18px; display:flex; flex-direction:column; gap:2px;
@@ -394,8 +468,8 @@ body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fa
 .c-amber {{ color:#d97706; }}
 .c-red {{ color:#dc2626; }}
 .c-slate {{ color:#475569; }}
+.c-orange {{ color:#e87623; }}
 
-/* ---- Charts ---- */
 .grid-2 {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }}
 .panel {{
     background:#fff; border:1px solid #e2e8f0; border-radius:8px;
@@ -407,7 +481,6 @@ body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fa
 }}
 .panel-hint {{ font-size:11px; color:#94a3b8; margin-bottom:16px; }}
 
-/* ---- Legend (arbre) ---- */
 .legend-bar {{
     background:#fff; border:1px solid #e2e8f0; border-radius:8px;
     padding:12px 18px; margin-bottom:16px; display:flex; flex-wrap:wrap;
@@ -415,21 +488,13 @@ body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fa
 }}
 .legend-bar .group-title {{ font-weight:600; color:#1e293b; margin-right:4px; }}
 .legend-item {{ display:inline-flex; align-items:center; gap:5px; }}
-.legend-dot {{
-    display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0;
-}}
-.legend-line {{
-    display:inline-block; width:24px; height:0; border-top:2px dashed #e87623; flex-shrink:0;
-}}
-.legend-line-solid {{
-    display:inline-block; width:24px; height:0; border-top:2px solid #94a3b8; flex-shrink:0;
-}}
+.legend-dot {{ display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }}
+.legend-line-back {{ display:inline-block; width:24px; height:0; border-top:2.5px dashed #e87623; flex-shrink:0; }}
+.legend-line-fwd {{ display:inline-block; width:24px; height:0; border-top:2.5px dashed #2563eb; flex-shrink:0; }}
+.legend-line-nav {{ display:inline-block; width:24px; height:0; border-top:2px solid #94a3b8; flex-shrink:0; }}
 .legend-sep {{ width:1px; height:20px; background:#e2e8f0; }}
 
-/* ---- Table ---- */
-.table-wrap {{
-    background:#fff; border:1px solid #e2e8f0; border-radius:8px; overflow-x:auto;
-}}
+.table-wrap {{ background:#fff; border:1px solid #e2e8f0; border-radius:8px; overflow-x:auto; }}
 table {{ width:100%; border-collapse:collapse; font-size:12px; }}
 thead th {{
     background:#f8fafc; padding:10px 12px; text-align:left; font-weight:600;
@@ -456,6 +521,7 @@ tbody tr:hover td {{ background:#f8fafc; }}
 .tag-amber {{ background:#fffbeb; color:#b45309; }}
 .tag-orange {{ background:#fff7ed; color:#c2410c; }}
 .tag-red {{ background:#fef2f2; color:#b91c1c; }}
+.tag-blue {{ background:#eff6ff; color:#1d4ed8; }}
 
 #chart-arbre {{ width:100%; height:calc(100vh - 210px); min-height:400px; }}
 
@@ -485,7 +551,7 @@ tbody tr:hover td {{ background:#f8fafc; }}
     <button class="tab-btn" onclick="showTab('donnees',this)">Donnees detaillees</button>
 </div>
 
-<!-- ======================== TAB 1 : ARBRE ======================== -->
+<!-- ======================== ARBRE ======================== -->
 <div id="tab-arbre" class="tab-content active">
     <div class="legend-bar">
         <span class="group-title">Noeuds</span>
@@ -496,15 +562,16 @@ tbody tr:hover td {{ background:#f8fafc; }}
         <span class="legend-item"><span class="legend-dot" style="background:#fff;border:2px solid #dc2626"></span> Onglet ferme</span>
         <span class="legend-sep"></span>
         <span class="group-title">Aretes</span>
-        <span class="legend-item"><span class="legend-line-solid"></span> Navigation</span>
-        <span class="legend-item"><span class="legend-line"></span> Retour arriere</span>
+        <span class="legend-item"><span class="legend-line-nav"></span> Navigation</span>
+        <span class="legend-item"><span class="legend-line-back"></span> Retour arriere (back)</span>
+        <span class="legend-item"><span class="legend-line-fwd"></span> Navigation avant (forward)</span>
         <span class="legend-sep"></span>
         <span style="color:#94a3b8;font-style:italic;">Molette = zoom, glisser = deplacer</span>
     </div>
     <div id="chart-arbre"></div>
 </div>
 
-<!-- ======================== TAB 2 : METRIQUES ======================== -->
+<!-- ======================== METRIQUES ======================== -->
 <div id="tab-metriques" class="tab-content">
     <div class="stats-row">
         <div class="stat"><div class="stat-value c-blue">{tot['pages']}</div><div class="stat-label">Pages visitees</div></div>
@@ -513,7 +580,8 @@ tbody tr:hover td {{ background:#f8fafc; }}
         <div class="stat"><div class="stat-value c-indigo">{tot['clics']}</div><div class="stat-label">Clics totaux</div></div>
         <div class="stat"><div class="stat-value c-green">{tot['copies']}</div><div class="stat-label">Textes copies</div></div>
         <div class="stat"><div class="stat-value c-amber">{tot['saisies']}</div><div class="stat-label">Saisies clavier</div></div>
-        <div class="stat"><div class="stat-value c-red">{tot['back']}</div><div class="stat-label">Retours arriere</div></div>
+        <div class="stat"><div class="stat-value c-orange">{tot['back']}</div><div class="stat-label">Retours arriere</div></div>
+        <div class="stat"><div class="stat-value c-blue">{tot['forward']}</div><div class="stat-label">Navigations avant</div></div>
         <div class="stat"><div class="stat-value c-red">{tot['closed']}</div><div class="stat-label">Onglets fermes</div></div>
     </div>
 
@@ -525,7 +593,7 @@ tbody tr:hover td {{ background:#f8fafc; }}
             <div id="chart-temps" style="width:100%;height:{ch}px;"></div>
         </div>
         <div class="panel">
-            <div class="panel-title">Profondeur de scroll (%) &mdash; vert &ge;75, orange &ge;40, rouge &lt;40</div>
+            <div class="panel-title">Profondeur de scroll — vert &ge;75% / orange &ge;40% / rouge &lt;40%</div>
             <div id="chart-scroll" style="width:100%;height:{ch}px;"></div>
         </div>
     </div>
@@ -545,14 +613,15 @@ tbody tr:hover td {{ background:#f8fafc; }}
     </div>
 </div>
 
-<!-- ======================== TAB 3 : DONNEES ======================== -->
+<!-- ======================== DONNEES ======================== -->
 <div id="tab-donnees" class="tab-content">
     <div class="table-wrap">
         <table>
             <thead><tr>
-                <th>Visit ID</th><th>Page</th><th>Heure</th><th>Temps</th>
+                <th>Visites</th><th>Page</th><th>Temps</th>
                 <th>Scroll</th><th>Clics</th><th>Copies</th><th>Saisies</th><th>Indicateurs</th>
             </tr></thead>
+
             <tbody>{rows_html}</tbody>
         </table>
     </div>
@@ -585,15 +654,12 @@ var yAxisDef = {{
     axisLabel:{{ fontSize:11, width:150, overflow:'truncate', color:'#3b82f6', triggerEvent:true,
                  fontFamily:'Inter,system-ui,sans-serif' }}
 }};
-
-var gridDef = {{ left:'38%', right:'12%', top:'3%', bottom:'8%', containLabel:false }};
-
+var gridDef = {{ left:'38%', right:'12%', top:'3%', bottom:'5%', containLabel:false }};
 var tooltipDef = {{ trigger:'axis', axisPointer:{{type:'shadow'}},
     textStyle:{{fontFamily:'Inter,system-ui,sans-serif',fontSize:12}} }};
 
 var C = {{}};
 
-/* 1. Arbre */
 C.arbre = echarts.init(document.getElementById('chart-arbre'));
 C.arbre.setOption({{
     tooltip:{{ trigger:'item', enterable:true, confine:true,
@@ -608,7 +674,6 @@ C.arbre.setOption({{
     }}]
 }});
 
-/* 2. Temps */
 C.temps = echarts.init(document.getElementById('chart-temps'));
 C.temps.setOption({{
     tooltip:tooltipDef, grid:gridDef,
@@ -620,7 +685,6 @@ C.temps.setOption({{
 }});
 bindClickOpen(C.temps);
 
-/* 3. Scroll */
 C.scroll = echarts.init(document.getElementById('chart-scroll'));
 C.scroll.setOption({{
     tooltip:tooltipDef, grid:gridDef,
@@ -632,12 +696,11 @@ C.scroll.setOption({{
 }});
 bindClickOpen(C.scroll);
 
-/* 4. Interactions */
 C.interactions = echarts.init(document.getElementById('chart-interactions'));
 C.interactions.setOption({{
     tooltip:tooltipDef,
     legend:{{ data:['Clics','Copies','Saisies'], top:0, textStyle:{{fontSize:11,fontFamily:'Inter,system-ui,sans-serif'}} }},
-    grid:{{ left:'38%', right:'8%', top:'10%', bottom:'8%' }},
+    grid:{{ left:'38%', right:'8%', top:'10%', bottom:'5%' }},
     xAxis:{{ type:'value', axisLabel:{{fontSize:11}}, splitLine:{{lineStyle:{{type:'dashed',color:'#f1f5f9'}}}} }},
     yAxis:yAxisDef,
     series:[
@@ -648,7 +711,6 @@ C.interactions.setOption({{
 }});
 bindClickOpen(C.interactions);
 
-/* 5. Pie */
 C.pie = echarts.init(document.getElementById('chart-pie'));
 C.pie.setOption({{
     tooltip:{{ trigger:'item', formatter:'{{b}} : {{c}} ({{d}}%)',
@@ -662,11 +724,10 @@ C.pie.setOption({{
     }}]
 }});
 
-/* 6. Domaines */
 C.domaines = echarts.init(document.getElementById('chart-domaines'));
 C.domaines.setOption({{
     tooltip:{{ trigger:'axis', textStyle:{{fontFamily:'Inter,system-ui,sans-serif',fontSize:12}} }},
-    grid:{{ left:'30%', right:'10%', top:'5%', bottom:'8%' }},
+    grid:{{ left:'30%', right:'10%', top:'5%', bottom:'7%' }},
     xAxis:{{ type:'value', minInterval:1, axisLabel:{{fontSize:11}}, splitLine:{{lineStyle:{{type:'dashed',color:'#f1f5f9'}}}} }},
     yAxis:{{ type:'category', data:{j(doms_labels)}, inverse:true, axisLabel:{{fontSize:12}} }},
     series:[{{ type:'bar', data:{j(doms_values)}, barMaxWidth:16,
@@ -684,12 +745,11 @@ window.addEventListener('resize', function() {{ for(var k in C){{ if(C[k]) C[k].
     print(f"Dashboard genere : {fichier_sortie}")
     print(f"  {len(visites)} visites | {tot['pages']} pages | "
           f"{tot['clics']} clics | {tot['copies']} copies | {tot['saisies']} saisies | "
-          f"{tot['back']} retours | {tot['closed']} fermes")
+          f"{tot['back']} back | {tot['forward']} fwd | {tot['closed']} fermes")
 
 
-# =========================================================
 if __name__ == "__main__":
     generer_dashboard(
-        "Data_of_studies/etude26.json",
-        "Visualisation/dashboard26.html"
+        "Data_of_studies/etude50.json",
+        "Visualisation/dashboard50.html"
     )
