@@ -4,39 +4,35 @@
     <meta charset="UTF-8">
     <style>
         body {
-            width: 300px;
+            width: 280px;
             padding: 15px;
             font-family: 'Segoe UI', Arial, sans-serif;
             background: #1a1a2e;
             color: white;
+            text-align: center;
         }
         h2 {
-            text-align: center;
-            margin: 0 0 12px 0;
+            margin: 0 0 5px 0;
             font-size: 15px;
         }
-        .input-group {
-            margin-bottom: 12px;
-        }
-        .input-group label {
-            display: block;
+        .subtitle {
             font-size: 11px;
-            margin-bottom: 3px;
-            color: #aaa;
+            color: #888;
+            margin-bottom: 15px;
         }
-        .input-group input {
-            width: 100%;
-            padding: 8px;
+        .participant-badge {
+            background: #16213e;
             border: 1px solid #333;
             border-radius: 6px;
-            background: #16213e;
-            color: white;
-            font-size: 13px;
-            box-sizing: border-box;
+            padding: 6px 10px;
+            font-size: 11px;
+            color: #60a5fa;
+            margin-bottom: 15px;
+            display: inline-block;
         }
         button {
             width: 100%;
-            padding: 12px;
+            padding: 14px;
             margin-bottom: 6px;
             border: none;
             border-radius: 8px;
@@ -49,45 +45,36 @@
         button:hover { opacity: 0.85; }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
         #toggleBtn { background-color: #ef4444; }
-        #downloadBtn {
-            background-color: #6b7280;
-            font-size: 11px;
-            padding: 7px;
-        }
         #statusMsg {
-            text-align: center;
             font-size: 11px;
-            margin-top: 6px;
+            margin-top: 8px;
             min-height: 16px;
             line-height: 1.4;
         }
         .success { color: #22c55e; }
         .error { color: #ef4444; }
         .info { color: #60a5fa; }
-        hr { border-color: #333; margin: 10px 0; }
         .note {
             font-size: 10px;
-            color: #666;
-            text-align: center;
-            margin-top: 8px;
+            color: #555;
+            margin-top: 10px;
         }
     </style>
 </head>
 <body>
-    <h2>🔬 Tracker Web — ULaval</h2>
+    <h2>🔬 Tracker Web</h2>
+    <p class="subtitle">Étude ULaval — Navigation Web</p>
 
-    <div class="input-group">
-        <label>Votre identifiant participant :</label>
-        <input type="text" id="participantId" placeholder="ex: P01, P02..." />
-    </div>
+    <div class="participant-badge" id="participantBadge">ID : ...</div>
 
-    <button id="toggleBtn">🔴 COLLECTE OFF</button>
+    <button id="toggleBtn"> DÉMARRER L'ÉTUDE</button>
 
     <div id="statusMsg"></div>
 
-    <hr>
-    <button id="downloadBtn">💾 Télécharger une copie locale (backup)</button>
-    <p class="note">Les données sont envoyées automatiquement<br>quand vous arrêtez la collecte.</p>
+    <p class="note">
+        Les données sont envoyées automatiquement toute les 3 minutes 
+        et à la fin de chaque session de navigation lorsque vous cliquez sur "Terminer l'étude".<br>
+    </p>
 
     <script src="popup.js"></script>
 </body>

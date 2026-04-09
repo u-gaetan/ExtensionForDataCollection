@@ -16,6 +16,37 @@ let currentVisitByTab = {};
 let stateLoaded = false;
 let currentSessionId = null;
 let autoSendInterval = null;
+// =========================================================
+// PARTICIPANT ID — GÉNÉRÉ UNE SEULE FOIS À L'INSTALLATION
+// =========================================================
+let participantId = null;
+
+async function getOrCreateParticipantId() {
+    const storage = await chrome.storage.local.get(['participantId']);
+
+    if (storage.participantId) {
+        participantId = storage.participantId;
+    } else {
+        // ======================================================
+        // FORMAT : P-<timestamp_base36>-<random_4chars>
+        // Exemple : P-m2kf7x9-a3f8
+        // ======================================================
+
+        const timestamp = Date.now().toString(36);        // ex: "m2kf7x9" (compact)
+        const random = Math.random().toString(36).slice(2, 6); // ex: "a3f8"
+        participantId = `P-${timestamp}-${random}`;
+
+        await chrome.storage.local.set({ participantId });
+        console.log("🆕 Nouveau participantId généré:", participantId);
+    }
+
+    console.log("👤 ParticipantId:", participantId);
+    return participantId;
+}
+
+// Appeler au démarrage
+getOrCreateParticipantId();
+
 
 console.log("🔄 SERVICE WORKER DÉMARRÉ");
 
@@ -92,10 +123,7 @@ async function sendToServer(isFinal = false) {
         return { success: false, error: "Pas de données ou pas de sessionId" };
     }
 
-    // Récupérer le participantId
-    const storage = await chrome.storage.local.get(['participantId']);
-    const participantId = storage.participantId || "anonyme";
-    console.log("👤 participantId =", participantId);
+    if (!participantId) await getOrCreateParticipantId();
 
     // --- Nettoyage : dédupliquer les page_quittee ---
     const cleanedData = [];
