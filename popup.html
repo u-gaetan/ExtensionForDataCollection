@@ -1,18 +1,94 @@
-<html>
+<!DOCTYPE html>
+<html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <style>
-    body { width: 280px; padding: 15px; font-family: Arial, sans-serif; text-align: center; }
-    button { padding: 12px 15px; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 8px; border: none; width: 100%; margin-bottom: 10px; color: white;}
-    #toggleBtn { background-color: #ef4444; } /* Rouge par défaut (OFF) */
-    #toggleBtn.active { background-color: #22c55e; } /* Vert si (ON) */
-    #downloadBtn { background-color: #3b82f6; }
-  </style>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            width: 300px;
+            padding: 15px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #1a1a2e;
+            color: white;
+        }
+        h2 {
+            text-align: center;
+            margin: 0 0 12px 0;
+            font-size: 15px;
+        }
+        .input-group {
+            margin-bottom: 12px;
+        }
+        .input-group label {
+            display: block;
+            font-size: 11px;
+            margin-bottom: 3px;
+            color: #aaa;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #16213e;
+            color: white;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 6px;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.85; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        #toggleBtn { background-color: #ef4444; }
+        #downloadBtn {
+            background-color: #6b7280;
+            font-size: 11px;
+            padding: 7px;
+        }
+        #statusMsg {
+            text-align: center;
+            font-size: 11px;
+            margin-top: 6px;
+            min-height: 16px;
+            line-height: 1.4;
+        }
+        .success { color: #22c55e; }
+        .error { color: #ef4444; }
+        .info { color: #60a5fa; }
+        hr { border-color: #333; margin: 10px 0; }
+        .note {
+            font-size: 10px;
+            color: #666;
+            text-align: center;
+            margin-top: 8px;
+        }
+    </style>
 </head>
 <body>
-  <h2>Étude de Navigation</h2>
-  <button id="toggleBtn">🔴 COLLECTE OFF</button>
-  <button id="downloadBtn"> Télécharger les données</button>
-  <script src="popup.js"></script>
+    <h2>🔬 Tracker Web — ULaval</h2>
+
+    <div class="input-group">
+        <label>Votre identifiant participant :</label>
+        <input type="text" id="participantId" placeholder="ex: P01, P02..." />
+    </div>
+
+    <button id="toggleBtn">🔴 COLLECTE OFF</button>
+
+    <div id="statusMsg"></div>
+
+    <hr>
+    <button id="downloadBtn">💾 Télécharger une copie locale (backup)</button>
+    <p class="note">Les données sont envoyées automatiquement<br>quand vous arrêtez la collecte.</p>
+
+    <script src="popup.js"></script>
 </body>
 </html>
