@@ -1,4 +1,11 @@
 // =========================================================
+// 🆕 CONFIGURATION ENVOI AUTOMATIQUE
+// =========================================================
+const SERVER_URL = "http://localhost:3000/api/collecte";
+const API_KEY = "c5a0148cee18b89b3db4075fc29b82d2c613485124f943e8f52053da61cf3d40";  // Même clé que dans .env
+
+
+// =========================================================
 // ÉTAT EN MÉMOIRE
 // =========================================================
 let sessionData = [];
@@ -7,6 +14,8 @@ let isTracking = false;
 let visitCounter = 0;
 let currentVisitByTab = {};
 let stateLoaded = false;
+let currentSessionId = null;
+let autoSendInterval = null;
 
 console.log("🔄 SERVICE WORKER DÉMARRÉ");
 
@@ -20,15 +29,20 @@ async function loadState() {
         'sw_sessionData',
         'sw_tabHistory',
         'sw_currentVisitByTab',
-        'sw_visitCounter'
+        'sw_visitCounter',
+        'sw_sessionId'
     ]);
     isTracking = res.isTracking || false;
     sessionData = res.sw_sessionData || [];
     tabHistory = res.sw_tabHistory || {};
     currentVisitByTab = res.sw_currentVisitByTab || {};
     visitCounter = res.sw_visitCounter || 0;
+    currentSessionId = res.sw_sessionId || null;
     stateLoaded = true;
-    console.log("📂 État restauré — sessionData.length =", sessionData.length, "| isTracking=", isTracking, "| visitCounter=", visitCounter);
+
+    if (isTracking) startAutoSend();
+
+    console.log(" État restauré — sessionData.length =", sessionData.length, "| isTracking=", isTracking, "| visitCounter=", visitCounter);
 }
 
 let saveTimer = null;
@@ -51,7 +65,8 @@ function _doSave() {
         sw_sessionData: sessionData,
         sw_tabHistory: tabHistory,
         sw_currentVisitByTab: currentVisitByTab,
-        sw_visitCounter: visitCounter
+        sw_visitCounter: visitCounter,
+        sw_sessionId: currentSessionId
     });
 }
 
@@ -66,6 +81,100 @@ chrome.storage.onChanged.addListener((changes) => {
     }
 });
 
+// =========================================================
+// 🆕 ENVOI AUTOMATIQUE VERS LE SERVEUR
+// =========================================================
+async function sendToServer(isFinal = false) {
+    console.log("📤 sendToServer appelé | isFinal=", isFinal, "| sessionData.length=", sessionData.length, "| sessionId=", currentSessionId);
+
+    if (sessionData.length === 0 || !currentSessionId) {
+        console.warn("⚠️ Envoi annulé : sessionData vide ou pas de sessionId");
+        return { success: false, error: "Pas de données ou pas de sessionId" };
+    }
+
+    // Récupérer le participantId
+    const storage = await chrome.storage.local.get(['participantId']);
+    const participantId = storage.participantId || "anonyme";
+    console.log("👤 participantId =", participantId);
+
+    // --- Nettoyage : dédupliquer les page_quittee ---
+    const cleanedData = [];
+    const bestPageQuittee = {};
+
+    for (const event of sessionData) {
+        if (event.type === 'page_quittee') {
+            const vid = event.visitId;
+            if (!bestPageQuittee[vid] || event.temps_passe_ms > bestPageQuittee[vid].temps_passe_ms) {
+                bestPageQuittee[vid] = event;
+            }
+        } else {
+            cleanedData.push(event);
+        }
+    }
+    for (const vid in bestPageQuittee) {
+        cleanedData.push(bestPageQuittee[vid]);
+    }
+
+    cleanedData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const dataToSend = cleanedData.map(event => ({
+        ...event,
+        sessionId: currentSessionId,
+        participantId: participantId
+    }));
+
+    console.log("📊 Données à envoyer:", dataToSend.length, "événements");
+    console.log("📊 Premier événement:", JSON.stringify(dataToSend[0]));
+    console.log("📊 URL serveur:", SERVER_URL);
+
+    try {
+        const response = await fetch(SERVER_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "x-api-key": API_KEY
+            },
+            body: JSON.stringify(dataToSend)
+        });
+
+        console.log("📡 Réponse HTTP:", response.status, response.statusText);
+
+        const responseBody = await response.json().catch(() => ({}));
+        console.log("📡 Body réponse:", JSON.stringify(responseBody));
+
+        if (!response.ok) {
+            throw new Error(responseBody.erreur || `HTTP ${response.status}`);
+        }
+
+        console.log("✅ Envoi réussi :", responseBody.message);
+        return { success: true, message: responseBody.message, count: dataToSend.length };
+
+    } catch (error) {
+        console.error("❌ Échec envoi :", error.message);
+        console.error("❌ Stack:", error.stack);
+        return { success: false, error: error.message };
+    }
+}
+
+
+// Envoi toutes les 3 minutes pendant le tracking
+function startAutoSend() {
+    stopAutoSend();
+    autoSendInterval = setInterval(() => {
+        if (isTracking && sessionData.length > 0) {
+            console.log("⏰ Envoi automatique périodique...");
+            sendToServer(false);
+        }
+    }, 3 * 60 * 1000);  // 3 minutes
+    console.log("⏰ Envoi automatique activé (toutes les 3 min)");
+}
+
+function stopAutoSend() {
+    if (autoSendInterval) {
+        clearInterval(autoSendInterval);
+        autoSendInterval = null;
+    }
+}
 
 // =========================================================
 //    RETRY INTELLIGENT
@@ -247,11 +356,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === "start_tracking") {
+        
         console.log("🚀 start_tracking | sessionData=", sessionData.length);
 
         // forcer isTracking IMMÉDIATEMENT en mémoire
         //    (le storage.onChanged arrivera plus tard)
         isTracking = true;
+        currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        console.log("🆔 Nouveau sessionId:", currentSessionId);
+
+        startAutoSend();
 
         chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
             if (tabs.length > 0) {
@@ -286,17 +400,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     //    (appelé par popup.js APRÈS que force_save_stats ait été envoyé)
     if (message.action === "stop_tracking") {
         console.log("🛑 stop_tracking | sessionData=", sessionData.length);
+        stopAutoSend();
         saveStateNow();
-        sendResponse({ success: true });
+
+        // 🔍 DEBUG : est-ce qu'on arrive ici ?
+        console.log("🛑 Appel de sendToServer(true)...");
+
+        sendToServer(true).then(result => {
+            console.log("🛑 Résultat sendToServer:", JSON.stringify(result));
+            sendResponse(result);
+        });
         return true;
+    }
+
+
+    if (message.action === "send_to_server") {
+    sendToServer(true).then(result => {
+        sendResponse(result);
+    });
+    return true;
     }
 
 
     // --- Événements des content scripts ---
 
-    // 🔧 FIX BUG 3 (doublons) : DÉDUPLICATION page_quittee
+    // FIX BUG  (doublons) : DÉDUPLICATION page_quittee
     //    → on garde celui avec le plus de temps (le plus complet)
-    // 🔧 FIX BUG 2 : on accepte page_quittee même si isTracking vient de
+    // FIX BUG  : on accepte page_quittee même si isTracking vient de
     //    passer à false (race condition avec stop_tracking)
     if (message.type === 'page_quittee' && message.visitId) {
         console.log("📩 page_quittee reçu | visitId=", message.visitId,
