@@ -2,7 +2,7 @@
 // 🆕 CONFIGURATION ENVOI AUTOMATIQUE
 // =========================================================
 const SERVER_URL = "http://localhost:3000/api/collecte";
-const API_KEY = "c5a0148cee18b89b3db4075fc29b82d2c613485124f943e8f52053da61cf3d40";  // Même clé que dans .env
+const API_KEY = "976ac3d56d0738d70eaf2b6bf1807a139bc71cde5c81b19c039058e35221e3a3";  // Même clé que dans .env
 
 
 // =========================================================

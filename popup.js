@@ -49,8 +49,12 @@ toggleBtn.addEventListener('click', () => {
                         action: "force_save_stats"
                     }).catch(() => {});
                 }
-
-                setTimeout(() => {
+                
+                chrome.tabs.sendMessage(tabs[0].id, { action: "force_save_stats" }, () => {
+                    // Accusé reçu OU erreur (page chrome://, etc.) → on continue
+                    if (chrome.runtime.lastError) {
+                        console.warn("force_save_stats non reçu:", chrome.runtime.lastError.message);
+                    }
                     chrome.runtime.sendMessage({ action: "stop_tracking" }, (result) => {
                         chrome.storage.local.set({ isTracking: false }, () => {
                             updateUI(false);
@@ -63,7 +67,8 @@ toggleBtn.addEventListener('click', () => {
                             }
                         });
                     });
-                }, 500);
+                });
+            
             });
         }
     });
