@@ -34,6 +34,13 @@ toggleBtn.addEventListener('click', () => {
                             updateUI(true);
                             showStatus("🟢 Naviguez normalement !", "success");
                         });
+                        chrome.runtime.sendMessage({ action: "get_extension_ids" }, (ids) => {
+                            if (ids && ids.participantId && ids.sessionId) {
+                                const questionnaireUrl =
+                                    `http://localhost:3000/questionnaire/?pid=${ids.participantId}&sid=${ids.sessionId}`;
+                                chrome.tabs.create({ url: questionnaireUrl });
+                            }
+                        });
                     });
                 });
             });

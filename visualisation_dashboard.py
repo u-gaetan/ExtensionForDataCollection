@@ -750,6 +750,6 @@ window.addEventListener('resize', function() {{ for(var k in C){{ if(C[k]) C[k].
 
 if __name__ == "__main__":
     generer_dashboard(
-        "Data_of_studies/etude50.json",
-        "Visualisation/dashboard50.html"
+        "Data_of_studies/DB_WebNavigation_test1_questionnaire.json",
+        "Visualisation/dashboardTest1Questionnaire.html"
     )

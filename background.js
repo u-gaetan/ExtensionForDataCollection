@@ -178,6 +178,9 @@ async function sendToServer(isFinal = false) {
         return { success: true, message: responseBody.message, count: dataToSend.length };
 
     } catch (error) {
+        const errorData = await response.json();
+        console.error("❌ Détails validation:", JSON.stringify(errorData.details || []));
+        throw new Error(errorData.erreur || `HTTP ${response.status}`);
         console.error("❌ Échec envoi :", error.message);
         console.error("❌ Stack:", error.stack);
         return { success: false, error: error.message };
@@ -422,6 +425,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
             sendResponse({ success: true });
         });
+        return true;
+    }
+
+    if (message.action === "get_extension_ids") {
+        (async () => {
+            if (!participantId) await getOrCreateParticipantId();
+            sendResponse({
+                participantId: participantId,
+                sessionId: currentSessionId,
+                isTracking: isTracking
+            });
+        })();
         return true;
     }
 
