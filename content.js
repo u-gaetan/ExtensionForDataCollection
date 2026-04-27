@@ -5,6 +5,7 @@ let lastFocusTime = Date.now();
 let isPageVisible = !document.hidden;
 let alreadySentForThisPage = false;
 let lastSentText = "";
+const IS_QUESTIONNAIRE_PAGE = window.location.pathname.startsWith('/questionnaire');
 
 
 // =========================================================
@@ -166,6 +167,8 @@ document.addEventListener('copy', function(event) {
 // 6. SAISIE CLAVIER
 // =========================================================
 function envoyerTexte(text) {
+    if (IS_QUESTIONNAIRE_PAGE) return;
+
     if (!currentVisitId) return; // 🔧 Protection
     if (!text || !text.trim() || text.trim() === lastSentText) return;
     lastSentText = text.trim();
@@ -179,6 +182,8 @@ function envoyerTexte(text) {
 }
 
 document.addEventListener('focusout', function(event) {
+    if (IS_QUESTIONNAIRE_PAGE) return;
+
     const el = event.target;
     if (!el) return;
     let text = '';
@@ -191,6 +196,8 @@ document.addEventListener('focusout', function(event) {
 }, true);
 
 document.addEventListener('keydown', function(event) {
+    if (IS_QUESTIONNAIRE_PAGE) return;
+
     if (event.key === 'Enter' && event.target) {
         const el = event.target;
         let text = '';

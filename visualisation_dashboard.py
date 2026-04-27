@@ -1,12 +1,15 @@
 import json
 import base64
+import sys
+import csv
+import io
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 
-# =========================================================
+# ═══════════════════════════════════════════════════════════
 # UTILITAIRES
-# =========================================================
+# ═══════════════════════════════════════════════════════════
 
 def extraire_nom_court(url):
     try:
@@ -34,7 +37,6 @@ def generer_symbole_svg(has_clic, has_copy, has_keyb, is_closed=False):
     if has_copy: colors.append("#059669")
     if has_keyb: colors.append("#d97706")
     if not colors: colors = ["#64748b"]
-
     svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
     if len(colors) == 1:
         svg += f'<circle cx="50" cy="50" r="46" fill="{colors[0]}" />'
@@ -45,7 +47,6 @@ def generer_symbole_svg(has_clic, has_copy, has_keyb, is_closed=False):
         svg += f'<circle cx="50" cy="50" r="46" fill="{colors[0]}" />'
         svg += f'<path d="M 50 50 L 50 4 A 46 46 0 0 1 89.8 73 Z" fill="{colors[1]}" />'
         svg += f'<path d="M 50 50 L 89.8 73 A 46 46 0 0 1 10.2 73 Z" fill="{colors[2]}" />'
-
     bcol = "#dc2626" if is_closed else "#ffffff"
     sw = "6" if is_closed else "3"
     svg += f'<circle cx="50" cy="50" r="46" fill="none" stroke="{bcol}" stroke-width="{sw}"/>'
@@ -60,21 +61,95 @@ def ts_to_heure(timestamp):
         return "—"
 
 
-# =========================================================
-# GENERATION DU DASHBOARD
-# =========================================================
+# ═══════════════════════════════════════════════════════════
+# GESTION DES PERIODES DE QUESTIONS
+# ═══════════════════════════════════════════════════════════
+
+ANSWER_TYPES = {'demographics', 'research_answer', 'self_assessment', 'memory_answer'}
+
+COLOR_PALETTE = [
+    '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b',
+    '#10b981', '#06b6d4', '#ef4444', '#84cc16',
+    '#a855f7', '#14b8a6', '#f43f5e', '#eab308'
+]
+
+
+def create_question_periods(reponses):
+    if not reponses:
+        return []
+    answers = sorted(
+        [r for r in reponses if r.get('type') in ANSWER_TYPES],
+        key=lambda r: r.get('timestamp', '')
+    )
+    if not answers:
+        return []
+    periods = []
+    for i, a in enumerate(answers):
+        qid = a.get('questionId', '')
+        atype = a.get('type', '')
+        if qid:
+            label = str(qid) if str(qid).startswith('Q') else f'Q{i+1}'
+        elif atype == 'demographics':
+            label = f'Demo{i+1}'
+        elif atype == 'self_assessment':
+            label = f'Eval{i+1}'
+        elif atype == 'memory_answer':
+            label = f'Mem{i+1}'
+        else:
+            label = f'R{i+1}'
+        periods.append({
+            'label': label,
+            'type': atype,
+            'questionId': qid,
+            'start': answers[i - 1]['timestamp'] if i > 0 else None,
+            'end': a['timestamp'],
+            'data': a.get('data', {})
+        })
+    return periods
+
+
+def get_question_label(timestamp, periods):
+    if not periods or not timestamp:
+        return ''
+    for p in periods:
+        in_start = (p['start'] is None or timestamp >= p['start'])
+        in_end = (timestamp <= p['end'])
+        if in_start and in_end:
+            return p['label']
+    if timestamp > periods[-1]['end']:
+        return 'Post-Q'
+    return ''
+
+
+# ═══════════════════════════════════════════════════════════
+# GENERATION PRINCIPALE
+# ═══════════════════════════════════════════════════════════
 
 def generer_dashboard(fichier_entree, fichier_sortie):
     with open(fichier_entree, 'r', encoding='utf-8') as f:
-        logs = json.load(f)
+        raw = json.load(f)
 
-    # ====================================================
-    # ETAPE 1 : Agregation par visitId + detection back/forward par pile
-    # ====================================================
+    # --- Support des 2 formats ---
+    if isinstance(raw, list):
+        logs, reponses = raw, []
+    elif isinstance(raw, dict):
+        logs, reponses = raw.get('events', []), raw.get('reponses', [])
+    else:
+        raise ValueError("Format de fichier non supporté")
+
+    question_periods = create_question_periods(reponses)
+    has_questions = len(question_periods) > 0
+
+    q_colors = {}
+    for i, p in enumerate(question_periods):
+        q_colors[p['label']] = COLOR_PALETTE[i % len(COLOR_PALETTE)]
+
+    # ────────────────────────────────────────────────
+    # ETAPE 1 : Visites + interactions + questions
+    # ────────────────────────────────────────────────
     visites = []
     visit_by_id = {}
     dernier_chrono = None
-
     tab_stack = {}
     tab_pointer = {}
 
@@ -85,18 +160,14 @@ def generer_dashboard(fichier_entree, fichier_sortie):
 
         if t == 'navigation':
             tab_id = log.get('tabId')
-
             is_back = False
             is_forward = False
-
             if tab_id is not None:
                 if tab_id not in tab_stack:
                     tab_stack[tab_id] = []
                     tab_pointer[tab_id] = -1
-
                 stack = tab_stack[tab_id]
                 ptr = tab_pointer[tab_id]
-
                 if ptr >= 1 and stack[ptr - 1] == url:
                     is_back = True
                     tab_pointer[tab_id] = ptr - 1
@@ -106,22 +177,24 @@ def generer_dashboard(fichier_entree, fichier_sortie):
                 else:
                     tab_stack[tab_id] = stack[:ptr + 1] + [url]
                     tab_pointer[tab_id] = ptr + 1
-
             if log.get('transitionType') == 'back_forward':
                 if not is_back and not is_forward:
                     is_back = True
+
+            ts = log.get('timestamp', '')
+            qlabel = get_question_label(ts, question_periods)
 
             v = {
                 'id': len(visites), 'url': url, 'visitId': vid,
                 'parentUrl': log.get('parentUrl', ''),
                 'tabId': tab_id,
-                'is_back': is_back,
-                'is_forward': is_forward,
-                'timestamp': log.get('timestamp'),
+                'is_back': is_back, 'is_forward': is_forward,
+                'timestamp': ts,
                 'clics': 0, 'maxScroll': 0, 'temps_ms': 0,
                 'copies': [], 'saisies': [], 'tab_closed': False,
                 'parent_chrono': dernier_chrono['id'] if dernier_chrono else None,
-                'nom': extraire_nom_court(url)
+                'nom': extraire_nom_court(url),
+                'question': qlabel
             }
             visites.append(v)
             if vid:
@@ -130,14 +203,12 @@ def generer_dashboard(fichier_entree, fichier_sortie):
 
         elif t == 'tab_closed':
             tid = log.get('tabId')
-            for v in reversed(visites):
-                if v.get('tabId') == tid:
-                    v['tab_closed'] = True
+            for vv in reversed(visites):
+                if vv.get('tabId') == tid:
+                    vv['tab_closed'] = True
                     break
-            if tid in tab_stack:
-                del tab_stack[tid]
-            if tid in tab_pointer:
-                del tab_pointer[tid]
+            tab_stack.pop(tid, None)
+            tab_pointer.pop(tid, None)
 
         elif vid and vid in visit_by_id:
             vi = visit_by_id[vid]
@@ -151,29 +222,31 @@ def generer_dashboard(fichier_entree, fichier_sortie):
             elif t == 'saisie_clavier':
                 vi['saisies'].append(log.get('texte', ''))
 
-    # ====================================================
-    # ETAPE 2 : Construction de l'arbre
-    # ====================================================
+    if not visites:
+        print("Aucune visite trouvée.")
+        return
+
+    # ────────────────────────────────────────────────
+    # ETAPE 2 : Arbre (noeuds + liens)
+    # ────────────────────────────────────────────────
     nodes, links = [], []
     EX, EY = 180, 140
-    branch_of, max_y, xi = {}, 0, 0
+    branch_of = {}
+    max_y = 0
+    xi = 0
 
     for v in visites:
         nid = f"n{v['id']}"
         src, curv = None, 0
-
         if v['parentUrl'] and v['parentUrl'] not in (
                 "Demarrage de l'experience", "Ouverture directe / Nouvel onglet"):
             for pv in reversed(visites[:v['id']]):
                 if pv['url'] == v['parentUrl']:
                     src = f"n{pv['id']}"
-                    curv = 0 if (v.get('tabId') and pv.get('tabId')
-                                 and v['tabId'] == pv['tabId']) else 0.3
+                    curv = 0 if (v.get('tabId') and pv.get('tabId') and v['tabId'] == pv['tabId']) else 0.3
                     break
-
         if not src and v['parent_chrono'] is not None:
             src = f"n{v['parent_chrono']}"
-
         if src and src in branch_of:
             if curv > 0:
                 max_y += EY
@@ -185,28 +258,33 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         branch_of[nid] = my_y
 
         heure = ts_to_heure(v['timestamp'])
-        ts = round(v['temps_ms'] / 1000, 1)
+        ts_s = round(v['temps_ms'] / 1000, 1)
         url_esc = v['url'].replace("&", "&amp;").replace('"', "&quot;").replace("'", "&#39;")
         url_short = v['url'] if len(v['url']) < 60 else v['url'][:57] + "..."
 
         name = v['nom']
+        if v['question']:
+            name = f"[{v['question']}] {name}"
         if v['tab_closed']:
-            name += "  [ferme]"
+            name += "  [fermé]"
 
-        # Tooltip
         tip = (f"<div style='max-width:340px;white-space:normal;padding:8px 10px;"
                f"font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.6;'>"
-               f"<div style='font-weight:600;color:#e2e8f0;word-break:break-all;'>{url_short}</div>"
-               f"<div style='border-top:1px solid #334155;margin:8px 0;'></div>")
+               f"<div style='font-weight:600;color:#e2e8f0;word-break:break-all;'>{url_short}</div>")
+        if v['question']:
+            qc = q_colors.get(v['question'], '#94a3b8')
+            tip += (f"<div style='display:inline-block;background:{qc};color:#fff;padding:2px 8px;"
+                    f"border-radius:4px;font-size:11px;font-weight:600;margin:4px 0;'>{v['question']}</div>")
+        tip += f"<div style='border-top:1px solid #334155;margin:8px 0;'></div>"
         if v['is_back']:
             tip += "<div style='color:#f97316;font-weight:600;margin-bottom:4px;'>Retour arriere (back)</div>"
         if v['is_forward']:
             tip += "<div style='color:#3b82f6;font-weight:600;margin-bottom:4px;'>Navigation avant (forward)</div>"
         if v['tab_closed']:
-            tip += "<div style='color:#f87171;font-weight:600;margin-bottom:4px;'>Onglet ferme apres cette page</div>"
+            tip += "<div style='color:#f87171;font-weight:600;margin-bottom:4px;'>Onglet ferme</div>"
         tip += (f"<table style='width:100%;font-size:12px;color:#cbd5e1;'>"
                 f"<tr><td style='padding:2px 0;'>Heure</td><td style='text-align:right;font-weight:600;'>{heure}</td></tr>"
-                f"<tr><td>Temps passe</td><td style='text-align:right;font-weight:600;'>{ts} s</td></tr>"
+                f"<tr><td>Temps passe</td><td style='text-align:right;font-weight:600;'>{ts_s} s</td></tr>"
                 f"<tr><td>Profondeur scroll</td><td style='text-align:right;font-weight:600;'>{v['maxScroll']}%</td></tr>"
                 f"<tr><td>Clics</td><td style='text-align:right;font-weight:600;'>{v['clics']}</td></tr>"
                 f"</table>")
@@ -224,14 +302,10 @@ def generer_dashboard(fichier_entree, fichier_sortie):
                 f"font-weight:500;'>Ouvrir le lien</a></div></div>")
 
         has_act = v['clics'] > 0 or v['copies'] or v['saisies']
-
         nodes.append({
             "id": nid, "name": name,
             "x": xi * EX, "y": my_y,
-            "symbol": generer_symbole_svg(
-                v['clics'] > 0, bool(v['copies']), bool(v['saisies']),
-                is_closed=v['tab_closed']
-            ),
+            "symbol": generer_symbole_svg(v['clics'] > 0, bool(v['copies']), bool(v['saisies']), v['tab_closed']),
             "symbolSize": 30 if v['tab_closed'] else (26 if has_act else 18),
             "label": {"show": True, "position": "bottom", "rotate": 30,
                       "align": "left", "verticalAlign": "top",
@@ -240,65 +314,30 @@ def generer_dashboard(fichier_entree, fichier_sortie):
             "tooltipDetails": tip
         })
 
-        # --- Aretes avec labels BACK / FWD ---
         if src:
-            is_back = v.get('is_back', False)
-            is_forward = v.get('is_forward', False)
-
-            if is_back:
-                edge_color = "#e87623"
-                edge_type = "dashed"
-                edge_width = 2.5
-                edge_label = {
-                    "show": True,
-                    "formatter": "\u21A9 BACK",
-                    "fontSize": 10,
-                    "fontWeight": "bold",
-                    "color": "#fff",
-                    "backgroundColor": "#e87623",
-                    "borderRadius": 3,
-                    "padding": [2, 6],
-                    "fontFamily": "Inter, system-ui, sans-serif"
-                }
-            elif is_forward:
-                edge_color = "#2563eb"
-                edge_type = "dashed"
-                edge_width = 2.5
-                edge_label = {
-                    "show": True,
-                    "formatter": "\u21AA FWD",
-                    "fontSize": 10,
-                    "fontWeight": "bold",
-                    "color": "#fff",
-                    "backgroundColor": "#2563eb",
-                    "borderRadius": 3,
-                    "padding": [2, 6],
-                    "fontFamily": "Inter, system-ui, sans-serif"
-                }
+            if v['is_back']:
+                ec, et, ew = "#e87623", "dashed", 2.5
+                el = {"show": True, "formatter": "\u21A9 BACK", "fontSize": 10, "fontWeight": "bold",
+                      "color": "#fff", "backgroundColor": "#e87623", "borderRadius": 3,
+                      "padding": [2, 6], "fontFamily": "Inter, system-ui, sans-serif"}
+            elif v['is_forward']:
+                ec, et, ew = "#2563eb", "dashed", 2.5
+                el = {"show": True, "formatter": "\u21AA FWD", "fontSize": 10, "fontWeight": "bold",
+                      "color": "#fff", "backgroundColor": "#2563eb", "borderRadius": 3,
+                      "padding": [2, 6], "fontFamily": "Inter, system-ui, sans-serif"}
             else:
-                edge_color = "#94a3b8"
-                edge_type = "solid"
-                edge_width = 1.5
-                edge_label = None
-
-            link_obj = {
-                "source": src, "target": nid,
-                "lineStyle": {
-                    "curveness": curv,
-                    "color": edge_color,
-                    "width": edge_width,
-                    "type": edge_type
-                }
-            }
-            if edge_label:
-                link_obj["label"] = edge_label
-            links.append(link_obj)
-
+                ec, et, ew = "#94a3b8", "solid", 1.5
+                el = None
+            lnk = {"source": src, "target": nid,
+                    "lineStyle": {"curveness": curv, "color": ec, "width": ew, "type": et}}
+            if el:
+                lnk["label"] = el
+            links.append(lnk)
         xi += 1
 
-        # ====================================================
-    # ETAPE 3 : Donnees metriques — REGROUPEES PAR URL (y compris chrome://)
-    # ====================================================
+    # ────────────────────────────────────────────────
+    # ETAPE 3 : Métriques agrégées par URL
+    # ────────────────────────────────────────────────
     url_order = []
     url_groups = {}
     for v in visites:
@@ -306,17 +345,11 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         if u not in url_groups:
             url_order.append(u)
             url_groups[u] = {
-                'url': u,
-                'nom': v['nom'],
-                'temps_ms': 0,
-                'maxScroll': 0,
-                'clics': 0,
-                'copies': [],
-                'saisies': [],
-                'nb_visites': 0,
-                'back_count': 0,
-                'forward_count': 0,
-                'closed_count': 0,
+                'url': u, 'nom': v['nom'],
+                'temps_ms': 0, 'maxScroll': 0, 'clics': 0,
+                'copies': [], 'saisies': [], 'nb_visites': 0,
+                'back_count': 0, 'forward_count': 0, 'closed_count': 0,
+                'questions': set()
             }
         g = url_groups[u]
         g['temps_ms'] += v['temps_ms']
@@ -328,19 +361,16 @@ def generer_dashboard(fichier_entree, fichier_sortie):
         if v.get('is_back'):    g['back_count'] += 1
         if v.get('is_forward'): g['forward_count'] += 1
         if v.get('tab_closed'): g['closed_count'] += 1
+        if v.get('question'):   g['questions'].add(v['question'])
 
     vr = [url_groups[u] for u in url_order]
-
     labels = [v['nom'] for v in vr]
-    urls_list = [v['url'] for v in vr]
     temps_data = [round(v['temps_ms'] / 1000, 1) for v in vr]
-
     scroll_items = []
     for v in vr:
         s = v['maxScroll']
         col = '#059669' if s >= 75 else ('#d97706' if s >= 40 else '#dc2626')
         scroll_items.append({"value": s, "itemStyle": {"color": col}})
-
     clics_data = [v['clics'] for v in vr]
     copies_data = [len(v['copies']) for v in vr]
     saisies_data = [len(v['saisies']) for v in vr]
@@ -361,7 +391,7 @@ def generer_dashboard(fichier_entree, fichier_sortie):
     if tot['clics']:   pie.append({"name": "Clics",   "value": tot['clics']})
     if tot['copies']:  pie.append({"name": "Copies",  "value": tot['copies']})
     if tot['saisies']: pie.append({"name": "Saisies", "value": tot['saisies']})
-    if not pie:        pie.append({"name": "Aucune interaction",  "value": 1})
+    if not pie:        pie.append({"name": "Aucune interaction", "value": 1})
 
     doms = {}
     for v in vr:
@@ -386,24 +416,68 @@ def generer_dashboard(fichier_entree, fichier_sortie):
 
     ch = max(280, len(vr) * 40 + 80)
 
-        # ====================================================
-    # ETAPE 4 : Tableau de donnees — REGROUPE PAR URL
-    # ====================================================
-    rows_html = ""
+    # ────────────────────────────────────────────────
+    # ETAPE 4a : Labels de questions uniques (pour filtres)
+    # ────────────────────────────────────────────────
+    all_q_labels = []
+    seen_q = set()
+    for v in visites:
+        q = v.get('question', '')
+        if q and q not in seen_q:
+            all_q_labels.append(q)
+            seen_q.add(q)
+
+    # ────────────────────────────────────────────────
+    # ETAPE 4b : Tableau détaillé (par visite)
+    # ────────────────────────────────────────────────
+    detail_rows_html = ""
+    for v in visites:
+        url_esc = v['url'].replace("&", "&amp;").replace('"', "&quot;").replace("'", "&#39;")
+        q = v.get('question', '')
+        qc = q_colors.get(q, '#64748b')
+        tags = ""
+        if v.get('is_back'):    tags += '<span class="tag tag-orange">Back</span>'
+        if v.get('is_forward'): tags += '<span class="tag tag-blue">Fwd</span>'
+        if v.get('tab_closed'): tags += '<span class="tag tag-red">Fermé</span>'
+        if v['clics']:          tags += f'<span class="tag tag-indigo">{v["clics"]} clic(s)</span>'
+        if v['copies']:         tags += f'<span class="tag tag-green">{len(v["copies"])} copie(s)</span>'
+        if v['saisies']:        tags += f'<span class="tag tag-amber">{len(v["saisies"])} saisie(s)</span>'
+        cp = "; ".join(f'"{t[:30]}"' for t in v['copies']) or "—"
+        sa = "; ".join(f'"{t[:30]}"' for t in v['saisies']) or "—"
+        heure = ts_to_heure(v['timestamp'])
+        q_badge = f'<span class="q-badge" style="background:{qc}">{q}</span>' if q else '—'
+
+        detail_rows_html += f"""<tr data-question="{q}">
+            <td>{q_badge}</td>
+            <td class="cell-mono">{heure}</td>
+            <td><a href="{url_esc}" target="_blank" class="cell-link" title="{url_esc}">{v['nom']}</a></td>
+            <td class="cell-right">{round(v['temps_ms']/1000,1)} s</td>
+            <td class="cell-right">{v['maxScroll']}%</td>
+            <td class="cell-right">{v['clics']}</td>
+            <td class="cell-dim">{cp}</td>
+            <td class="cell-dim">{sa}</td>
+            <td>{tags}</td>
+        </tr>"""
+
+    # ────────────────────────────────────────────────
+    # ETAPE 4c : Tableau agrégé par URL
+    # ────────────────────────────────────────────────
+    agg_rows_html = ""
     for v in vr:
         url_esc = v['url'].replace("&", "&amp;").replace('"', "&quot;").replace("'", "&#39;")
+        qs = ", ".join(sorted(v['questions'])) if v['questions'] else "—"
         tags = ""
         if v['back_count']:    tags += f'<span class="tag tag-orange">{v["back_count"]} Back</span>'
         if v['forward_count']: tags += f'<span class="tag tag-blue">{v["forward_count"]} Fwd</span>'
-        if v['closed_count']:  tags += f'<span class="tag tag-red">{v["closed_count"]} Ferme</span>'
+        if v['closed_count']:  tags += f'<span class="tag tag-red">{v["closed_count"]} Fermé</span>'
         if v['clics']:         tags += f'<span class="tag tag-indigo">{v["clics"]} clic(s)</span>'
         if v['copies']:        tags += f'<span class="tag tag-green">{len(v["copies"])} copie(s)</span>'
         if v['saisies']:       tags += f'<span class="tag tag-amber">{len(v["saisies"])} saisie(s)</span>'
-
         cp = "; ".join(f'"{t[:30]}"' for t in v['copies']) or "—"
         sa = "; ".join(f'"{t[:30]}"' for t in v['saisies']) or "—"
 
-        rows_html += f"""<tr>
+        agg_rows_html += f"""<tr>
+            <td>{qs}</td>
             <td class="cell-right">{v['nb_visites']}</td>
             <td><a href="{url_esc}" target="_blank" class="cell-link" title="{url_esc}">{v['nom']}</a></td>
             <td class="cell-right">{round(v['temps_ms']/1000,1)} s</td>
@@ -414,15 +488,58 @@ def generer_dashboard(fichier_entree, fichier_sortie):
             <td>{tags}</td>
         </tr>"""
 
+    # ────────────────────────────────────────────────
+    # ETAPE 4d : Tableau des réponses
+    # ────────────────────────────────────────────────
+    reponses_rows_html = ""
+    for r in sorted(reponses, key=lambda x: x.get('timestamp', '')):
+        rtype = r.get('type', '—')
+        qid = r.get('questionId', '—') or '—'
+        ts_r = ts_to_heure(r.get('timestamp', ''))
+        diff = r.get('difficulty', '—') or '—'
+        data_r = r.get('data', {})
+        if isinstance(data_r, dict):
+            data_summary = "; ".join(f"{k}: {str(dv)[:40]}" for k, dv in list(data_r.items())[:4])
+        else:
+            data_summary = str(data_r)[:100]
+        data_full = json.dumps(data_r, ensure_ascii=False)[:200].replace('"', '&quot;')
 
-    # ====================================================
-    # ETAPE 5 : Serialisation
-    # ====================================================
+        reponses_rows_html += f"""<tr>
+            <td class="cell-mono">{ts_r}</td>
+            <td><span class="tag tag-blue">{rtype}</span></td>
+            <td><strong>{qid}</strong></td>
+            <td>{diff}</td>
+            <td class="cell-dim" title="{data_full}">{data_summary}</td>
+        </tr>"""
+
+    # ────────────────────────────────────────────────
+    # ETAPE 4e : Checkboxes filtres questions
+    # ────────────────────────────────────────────────
+    q_filter_html = ""
+    if has_questions:
+        q_filter_html += '<div class="q-filter-bar">'
+        q_filter_html += '<span class="filter-title">Filtrer par question :</span>'
+        q_filter_html += '<label class="q-cb"><input type="checkbox" checked onchange="toggleAllQ(this)"> Toutes</label>'
+        for ql in all_q_labels:
+            qc = q_colors.get(ql, '#64748b')
+            q_filter_html += (
+                f'<label class="q-cb">'
+                f'<input type="checkbox" checked data-question="{ql}" onchange="filterByQuestion()">'
+                f' <span class="q-dot" style="background:{qc}"></span> {ql}</label>'
+            )
+        q_filter_html += '</div>'
+
+    # ────────────────────────────────────────────────
+    # ETAPE 5 : Sérialisation JSON
+    # ────────────────────────────────────────────────
     j = lambda x: json.dumps(x, ensure_ascii=False)
 
-    # ====================================================
-    # ETAPE 6 : HTML
-    # ====================================================
+    nb_reponses = len(reponses)
+    reponses_tab_display = "inline-block" if nb_reponses > 0 else "none"
+
+    # ────────────────────────────────────────────────
+    # ETAPE 6 : HTML complet
+    # ────────────────────────────────────────────────
     html = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -431,10 +548,8 @@ def generer_dashboard(fichier_entree, fichier_sortie):
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-*, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fafc; color:#1e293b; font-size:14px; }}
-
+*,*::before,*::after {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ font-family:'Inter',system-ui,sans-serif; background:#f8fafc; color:#1e293b; font-size:14px; }}
 .header {{
     background:#1e293b; color:#f1f5f9; padding:18px 28px;
     display:flex; align-items:center; justify-content:space-between;
@@ -442,8 +557,7 @@ body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fa
 }}
 .header h1 {{ font-size:18px; font-weight:700; letter-spacing:-0.3px; }}
 .header-meta {{ font-size:12px; color:#94a3b8; display:flex; gap:18px; margin-top:4px; }}
-
-.tabs {{ display:flex; background:#fff; border-bottom:1px solid #e2e8f0; padding:0 20px; }}
+.tabs {{ display:flex; background:#fff; border-bottom:1px solid #e2e8f0; padding:0 20px; flex-wrap:wrap; }}
 .tab-btn {{
     padding:12px 20px; border:none; background:none; font-size:13px; font-weight:500;
     color:#64748b; cursor:pointer; border-bottom:2px solid transparent;
@@ -451,305 +565,367 @@ body {{ font-family:'Inter',system-ui,-apple-system,sans-serif; background:#f8fa
 }}
 .tab-btn:hover {{ color:#1e293b; }}
 .tab-btn.active {{ color:#3b82f6; border-bottom-color:#3b82f6; }}
-
 .tab-content {{ display:none; padding:24px; }}
 .tab-content.active {{ display:block; }}
-
-.stats-row {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:24px; }}
-.stat {{
-    background:#fff; border:1px solid #e2e8f0; border-radius:8px;
-    padding:16px 18px; display:flex; flex-direction:column; gap:2px;
+.stats-row {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:20px; }}
+.stat-card {{
+    background:#fff; border-radius:10px; padding:14px 18px;
+    box-shadow:0 1px 3px rgba(0,0,0,0.06); border:1px solid #e2e8f0;
 }}
-.stat-value {{ font-size:24px; font-weight:700; }}
-.stat-label {{ font-size:11px; font-weight:500; color:#64748b; text-transform:uppercase; letter-spacing:.6px; }}
-.c-blue {{ color:#3b82f6; }}
-.c-indigo {{ color:#6366f1; }}
-.c-green {{ color:#059669; }}
-.c-amber {{ color:#d97706; }}
-.c-red {{ color:#dc2626; }}
-.c-slate {{ color:#475569; }}
-.c-orange {{ color:#e87623; }}
-
-.grid-2 {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }}
-.panel {{
-    background:#fff; border:1px solid #e2e8f0; border-radius:8px;
-    padding:16px; display:flex; flex-direction:column;
+.stat-label {{ font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }}
+.stat-value {{ font-size:22px; font-weight:700; margin-top:2px; }}
+.chart-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }}
+.chart-box {{
+    background:#fff; border-radius:10px; padding:16px;
+    box-shadow:0 1px 3px rgba(0,0,0,0.06); border:1px solid #e2e8f0;
 }}
-.panel-title {{
-    font-size:13px; font-weight:600; color:#334155; margin-bottom:10px;
-    padding-bottom:8px; border-bottom:1px solid #f1f5f9;
-}}
-.panel-hint {{ font-size:11px; color:#94a3b8; margin-bottom:16px; }}
-
-.legend-bar {{
-    background:#fff; border:1px solid #e2e8f0; border-radius:8px;
-    padding:12px 18px; margin-bottom:16px; display:flex; flex-wrap:wrap;
-    gap:16px; align-items:center; font-size:12px; color:#475569;
-}}
-.legend-bar .group-title {{ font-weight:600; color:#1e293b; margin-right:4px; }}
-.legend-item {{ display:inline-flex; align-items:center; gap:5px; }}
-.legend-dot {{ display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }}
-.legend-line-back {{ display:inline-block; width:24px; height:0; border-top:2.5px dashed #e87623; flex-shrink:0; }}
-.legend-line-fwd {{ display:inline-block; width:24px; height:0; border-top:2.5px dashed #2563eb; flex-shrink:0; }}
-.legend-line-nav {{ display:inline-block; width:24px; height:0; border-top:2px solid #94a3b8; flex-shrink:0; }}
-.legend-sep {{ width:1px; height:20px; background:#e2e8f0; }}
-
-.table-wrap {{ background:#fff; border:1px solid #e2e8f0; border-radius:8px; overflow-x:auto; }}
-table {{ width:100%; border-collapse:collapse; font-size:12px; }}
-thead th {{
-    background:#f8fafc; padding:10px 12px; text-align:left; font-weight:600;
-    color:#475569; border-bottom:2px solid #e2e8f0; position:sticky; top:0; font-size:11px;
-    text-transform:uppercase; letter-spacing:.4px;
-}}
-tbody td {{ padding:8px 12px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }}
-tbody tr:hover td {{ background:#f8fafc; }}
-.cell-mono {{ font-family:'SF Mono',Consolas,monospace; font-size:11px; color:#64748b; }}
-.cell-right {{ text-align:right; font-variant-numeric:tabular-nums; }}
-.cell-link {{
-    color:#3b82f6; text-decoration:none; font-weight:500;
-    max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;
-}}
+.chart-box h3 {{ font-size:13px; font-weight:600; margin-bottom:10px; color:#334155; }}
+.chart-full {{ grid-column: span 2; }}
+table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+th {{ background:#f1f5f9; padding:10px 12px; text-align:left; font-weight:600;
+     color:#334155; border-bottom:2px solid #e2e8f0; position:sticky; top:0; z-index:1; }}
+td {{ padding:8px 12px; border-bottom:1px solid #f1f5f9; vertical-align:top; }}
+tr:hover {{ background:#f8fafc; }}
+.cell-right {{ text-align:right; }}
+.cell-mono {{ font-family:'JetBrains Mono',monospace; font-size:12px; }}
+.cell-link {{ color:#3b82f6; text-decoration:none; }}
 .cell-link:hover {{ text-decoration:underline; }}
-.cell-dim {{ max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:#94a3b8; }}
-
-.tag {{
-    display:inline-block; padding:2px 7px; border-radius:4px; font-size:10px;
-    font-weight:600; margin:1px 2px; text-transform:uppercase; letter-spacing:.3px;
-}}
-.tag-indigo {{ background:#eef2ff; color:#4f46e5; }}
-.tag-green {{ background:#ecfdf5; color:#047857; }}
-.tag-amber {{ background:#fffbeb; color:#b45309; }}
+.cell-dim {{ color:#64748b; font-size:12px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+.tag {{ display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; margin:1px 2px; }}
 .tag-orange {{ background:#fff7ed; color:#c2410c; }}
-.tag-red {{ background:#fef2f2; color:#b91c1c; }}
 .tag-blue {{ background:#eff6ff; color:#1d4ed8; }}
-
-#chart-arbre {{ width:100%; height:calc(100vh - 210px); min-height:400px; }}
-
-@media(max-width:900px) {{
-    .grid-2 {{ grid-template-columns:1fr; }}
-    .stats-row {{ grid-template-columns:repeat(2,1fr); }}
+.tag-red {{ background:#fef2f2; color:#b91c1c; }}
+.tag-indigo {{ background:#eef2ff; color:#4338ca; }}
+.tag-green {{ background:#f0fdf4; color:#15803d; }}
+.tag-amber {{ background:#fffbeb; color:#b45309; }}
+.q-badge {{
+    display:inline-block; padding:2px 10px; border-radius:4px;
+    font-size:11px; font-weight:700; color:#fff;
 }}
+.q-filter-bar {{
+    display:flex; align-items:center; gap:12px; padding:10px 16px;
+    background:#f1f5f9; border-radius:8px; margin-bottom:12px; flex-wrap:wrap;
+}}
+.filter-title {{ font-size:12px; font-weight:600; color:#334155; }}
+.q-cb {{ font-size:12px; color:#475569; cursor:pointer; display:flex; align-items:center; gap:4px; }}
+.q-dot {{ display:inline-block; width:10px; height:10px; border-radius:50%; }}
+.toolbar {{ display:flex; gap:10px; margin-bottom:12px; align-items:center; }}
+.btn {{
+    padding:8px 16px; border:none; border-radius:6px; font-size:12px;
+    font-weight:600; cursor:pointer; font-family:inherit; transition:background .2s;
+}}
+.btn-primary {{ background:#3b82f6; color:#fff; }}
+.btn-primary:hover {{ background:#2563eb; }}
+.btn-secondary {{ background:#e2e8f0; color:#334155; }}
+.btn-secondary:hover {{ background:#cbd5e1; }}
+.legend-box {{
+    background:#fff; border-radius:10px; padding:16px; margin-top:16px;
+    box-shadow:0 1px 3px rgba(0,0,0,0.06); border:1px solid #e2e8f0;
+    display:flex; flex-wrap:wrap; gap:16px; font-size:12px; color:#475569;
+}}
+.legend-item {{ display:flex; align-items:center; gap:6px; }}
+.legend-circle {{ width:14px; height:14px; border-radius:50%; }}
+.table-wrap {{ max-height:70vh; overflow:auto; border-radius:8px; border:1px solid #e2e8f0; }}
 </style>
 </head>
 <body>
 
 <div class="header">
-    <div>
-        <h1>Analyse de session de navigation</h1>
-        <div class="header-meta">
-            <span>Source : {fichier_entree}</span>
-            <span>{len(visites)} visites</span>
-            <span>{tot['pages']} pages</span>
-            <span>Duree : {duree_str}</span>
-        </div>
+  <div>
+    <h1>Analyse de session de navigation</h1>
+    <div class="header-meta">
+      <span>{len(visites)} visites</span>
+      <span>{tot['pages']} pages uniques</span>
+      <span>{tot['tabs']} onglets</span>
+      <span>Durée : {duree_str}</span>
+      <span>{tot['back']} back / {tot['forward']} fwd</span>
+      {"<span>" + str(nb_reponses) + " réponses</span>" if nb_reponses else ""}
     </div>
+  </div>
 </div>
 
 <div class="tabs">
-    <button class="tab-btn active" onclick="showTab('arbre',this)">Arbre de navigation</button>
-    <button class="tab-btn" onclick="showTab('metriques',this)">Metriques</button>
-    <button class="tab-btn" onclick="showTab('donnees',this)">Donnees detaillees</button>
+  <button class="tab-btn active" onclick="switchTab('arbre')">Arbre de navigation</button>
+  <button class="tab-btn" onclick="switchTab('metriques')">Métriques</button>
+  <button class="tab-btn" onclick="switchTab('detail')">Données détaillées</button>
+  <button class="tab-btn" onclick="switchTab('agrege')">Agrégé par URL</button>
+  <button class="tab-btn" style="display:{reponses_tab_display}" onclick="switchTab('reponses')">Réponses ({nb_reponses})</button>
 </div>
 
-<!-- ======================== ARBRE ======================== -->
+<!-- ═══════════ TAB : ARBRE ═══════════ -->
 <div id="tab-arbre" class="tab-content active">
-    <div class="legend-bar">
-        <span class="group-title">Noeuds</span>
-        <span class="legend-item"><span class="legend-dot" style="background:#64748b"></span> Aucune action</span>
-        <span class="legend-item"><span class="legend-dot" style="background:#6366f1"></span> Clics</span>
-        <span class="legend-item"><span class="legend-dot" style="background:#d97706"></span> Saisie clavier</span>
-        <span class="legend-item"><span class="legend-dot" style="background:#059669"></span> Texte copie</span>
-        <span class="legend-item"><span class="legend-dot" style="background:#fff;border:2px solid #dc2626"></span> Onglet ferme</span>
-        <span class="legend-sep"></span>
-        <span class="group-title">Aretes</span>
-        <span class="legend-item"><span class="legend-line-nav"></span> Navigation</span>
-        <span class="legend-item"><span class="legend-line-back"></span> Retour arriere (back)</span>
-        <span class="legend-item"><span class="legend-line-fwd"></span> Navigation avant (forward)</span>
-        <span class="legend-sep"></span>
-        <span style="color:#94a3b8;font-style:italic;">Molette = zoom, glisser = deplacer</span>
-    </div>
-    <div id="chart-arbre"></div>
+  <div class="chart-box" style="height:600px;overflow:auto;">
+    <div id="chart-arbre" style="width:{max(1200, xi*EX+200)}px; height:{max(500, max_y+300)}px;"></div>
+  </div>
+  <div class="legend-box">
+    <div class="legend-item"><div class="legend-circle" style="background:#6366f1;"></div> Clics</div>
+    <div class="legend-item"><div class="legend-circle" style="background:#059669;"></div> Copies</div>
+    <div class="legend-item"><div class="legend-circle" style="background:#d97706;"></div> Saisie clavier</div>
+    <div class="legend-item"><div class="legend-circle" style="background:#64748b;"></div> Aucune interaction</div>
+    <div class="legend-item"><div class="legend-circle" style="background:#fff;border:3px solid #dc2626;"></div> Onglet fermé</div>
+    <div class="legend-item"><span style="color:#e87623;font-weight:600;">- - ↩ BACK</span></div>
+    <div class="legend-item"><span style="color:#2563eb;font-weight:600;">- - ↪ FWD</span></div>
+  </div>
 </div>
 
-<!-- ======================== METRIQUES ======================== -->
+<!-- ═══════════ TAB : MÉTRIQUES ═══════════ -->
 <div id="tab-metriques" class="tab-content">
-    <div class="stats-row">
-        <div class="stat"><div class="stat-value c-blue">{tot['pages']}</div><div class="stat-label">Pages visitees</div></div>
-        <div class="stat"><div class="stat-value c-slate">{round(tot['temps']/1000)} s</div><div class="stat-label">Temps cumule</div></div>
-        <div class="stat"><div class="stat-value c-blue">{tot['tabs']}</div><div class="stat-label">Onglets utilises</div></div>
-        <div class="stat"><div class="stat-value c-indigo">{tot['clics']}</div><div class="stat-label">Clics totaux</div></div>
-        <div class="stat"><div class="stat-value c-green">{tot['copies']}</div><div class="stat-label">Textes copies</div></div>
-        <div class="stat"><div class="stat-value c-amber">{tot['saisies']}</div><div class="stat-label">Saisies clavier</div></div>
-        <div class="stat"><div class="stat-value c-orange">{tot['back']}</div><div class="stat-label">Retours arriere</div></div>
-        <div class="stat"><div class="stat-value c-blue">{tot['forward']}</div><div class="stat-label">Navigations avant</div></div>
-        <div class="stat"><div class="stat-value c-red">{tot['closed']}</div><div class="stat-label">Onglets fermes</div></div>
-    </div>
-
-    <div class="panel-hint">Les noms de pages sur l'axe vertical sont cliquables et ouvrent le lien dans un nouvel onglet.</div>
-
-    <div class="grid-2">
-        <div class="panel">
-            <div class="panel-title">Temps passe par page (secondes)</div>
-            <div id="chart-temps" style="width:100%;height:{ch}px;"></div>
-        </div>
-        <div class="panel">
-            <div class="panel-title">Profondeur de scroll — vert &ge;75% / orange &ge;40% / rouge &lt;40%</div>
-            <div id="chart-scroll" style="width:100%;height:{ch}px;"></div>
-        </div>
-    </div>
-    <div class="grid-2">
-        <div class="panel">
-            <div class="panel-title">Interactions par page</div>
-            <div id="chart-interactions" style="width:100%;height:{ch}px;"></div>
-        </div>
-        <div class="panel">
-            <div class="panel-title">Repartition globale des actions</div>
-            <div id="chart-pie" style="width:100%;height:{ch}px;"></div>
-        </div>
-    </div>
-    <div class="panel">
-        <div class="panel-title">Domaines les plus visites</div>
-        <div id="chart-domaines" style="width:100%;height:260px;"></div>
-    </div>
+  <div class="stats-row">
+    <div class="stat-card"><div class="stat-label">Pages visitées</div><div class="stat-value">{tot['pages']}</div></div>
+    <div class="stat-card"><div class="stat-label">Temps total</div><div class="stat-value">{round(tot['temps']/1000)}s</div></div>
+    <div class="stat-card"><div class="stat-label">Clics</div><div class="stat-value" style="color:#6366f1">{tot['clics']}</div></div>
+    <div class="stat-card"><div class="stat-label">Copies</div><div class="stat-value" style="color:#059669">{tot['copies']}</div></div>
+    <div class="stat-card"><div class="stat-label">Saisies</div><div class="stat-value" style="color:#d97706">{tot['saisies']}</div></div>
+    <div class="stat-card"><div class="stat-label">Retours (back)</div><div class="stat-value" style="color:#ea580c">{tot['back']}</div></div>
+    <div class="stat-card"><div class="stat-label">Onglets fermés</div><div class="stat-value" style="color:#dc2626">{tot['closed']}</div></div>
+  </div>
+  <div class="chart-grid">
+    <div class="chart-box chart-full"><h3>Temps passé par page (s)</h3><div id="chart-temps" style="height:{ch}px;"></div></div>
+    <div class="chart-box chart-full"><h3>Profondeur de scroll (%)</h3><div id="chart-scroll" style="height:{ch}px;"></div></div>
+    <div class="chart-box"><h3>Répartition des interactions</h3><div id="chart-pie" style="height:300px;"></div></div>
+    <div class="chart-box"><h3>Domaines les plus visités</h3><div id="chart-domaines" style="height:300px;"></div></div>
+  </div>
 </div>
 
-<!-- ======================== DONNEES ======================== -->
-<div id="tab-donnees" class="tab-content">
-    <div class="table-wrap">
-        <table>
-            <thead><tr>
-                <th>Visites</th><th>Page</th><th>Temps</th>
-                <th>Scroll</th><th>Clics</th><th>Copies</th><th>Saisies</th><th>Indicateurs</th>
-            </tr></thead>
-
-            <tbody>{rows_html}</tbody>
-        </table>
-    </div>
+<!-- ═══════════ TAB : DONNÉES DÉTAILLÉES ═══════════ -->
+<div id="tab-detail" class="tab-content">
+  {q_filter_html}
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="exportDetailCSV()">Télécharger CSV</button>
+    <span id="detail-count" style="font-size:12px;color:#64748b;">{len(visites)} lignes</span>
+  </div>
+  <div class="table-wrap">
+    <table id="detail-table">
+      <thead><tr>
+        <th>Question</th><th>Heure</th><th>Page</th><th>Temps</th>
+        <th>Scroll</th><th>Clics</th><th>Copies</th><th>Saisies</th><th>Tags</th>
+      </tr></thead>
+      <tbody id="detail-tbody">{detail_rows_html}</tbody>
+    </table>
+  </div>
 </div>
 
-<!-- ======================== JAVASCRIPT ======================== -->
+<!-- ═══════════ TAB : AGRÉGÉ PAR URL ═══════════ -->
+<div id="tab-agrege" class="tab-content">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Questions</th><th>Visites</th><th>Page</th><th>Temps total</th>
+        <th>Scroll max</th><th>Clics</th><th>Copies</th><th>Saisies</th><th>Tags</th>
+      </tr></thead>
+      <tbody>{agg_rows_html}</tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ TAB : RÉPONSES ═══════════ -->
+<div id="tab-reponses" class="tab-content">
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="exportReponsesCSV()">Télécharger CSV</button>
+    <span style="font-size:12px;color:#64748b;">{nb_reponses} réponses</span>
+  </div>
+  <div class="table-wrap">
+    <table id="reponses-table">
+      <thead><tr>
+        <th>Heure</th><th>Type</th><th>Question ID</th><th>Difficulté</th><th>Données</th>
+      </tr></thead>
+      <tbody>{reponses_rows_html}</tbody>
+    </table>
+  </div>
+</div>
+
 <script>
-var LABELS = {j(labels)};
-var URLS   = {j(urls_list)};
-
-function showTab(name, btn) {{
-    document.querySelectorAll('.tab-content').forEach(function(el) {{ el.classList.remove('active'); }});
-    document.querySelectorAll('.tab-btn').forEach(function(el) {{ el.classList.remove('active'); }});
-    document.getElementById('tab-' + name).classList.add('active');
-    if (btn) btn.classList.add('active');
-    setTimeout(function() {{ for (var k in C) {{ if (C[k]) C[k].resize(); }} }}, 120);
+// ───────── Onglets ─────────
+function switchTab(id) {{
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + id).classList.add('active');
+    event.target.classList.add('active');
+    if (id === 'arbre') setTimeout(() => window.__arbreChart && window.__arbreChart.resize(), 100);
 }}
 
-function bindClickOpen(chart) {{
-    chart.on('click', function(p) {{
-        var idx = -1;
-        if (p.componentType === 'series' && p.dataIndex !== undefined) idx = p.dataIndex;
-        else if (p.componentType === 'yAxis') idx = LABELS.indexOf(p.value);
-        if (idx >= 0 && idx < URLS.length && URLS[idx]) window.open(URLS[idx], '_blank');
+// ───────── Filtres questions ─────────
+function filterByQuestion() {{
+    var checks = document.querySelectorAll('.q-filter-bar input[data-question]');
+    var active = new Set();
+    checks.forEach(function(cb) {{ if (cb.checked) active.add(cb.dataset.question); }});
+    var rows = document.querySelectorAll('#detail-tbody tr');
+    var visible = 0;
+    rows.forEach(function(row) {{
+        var q = row.getAttribute('data-question');
+        if (!q || active.has(q)) {{
+            row.style.display = '';
+            visible++;
+        }} else {{
+            row.style.display = 'none';
+        }}
     }});
+    document.getElementById('detail-count').textContent = visible + ' / {len(visites)} lignes';
+    // Sync "Toutes"
+    var allCb = document.querySelector('.q-filter-bar input:not([data-question])');
+    if (allCb) allCb.checked = (active.size === checks.length);
 }}
 
-var yAxisDef = {{
-    type:'category', data:LABELS, inverse:true,
-    axisLabel:{{ fontSize:11, width:150, overflow:'truncate', color:'#3b82f6', triggerEvent:true,
-                 fontFamily:'Inter,system-ui,sans-serif' }}
-}};
-var gridDef = {{ left:'38%', right:'12%', top:'3%', bottom:'5%', containLabel:false }};
-var tooltipDef = {{ trigger:'axis', axisPointer:{{type:'shadow'}},
-    textStyle:{{fontFamily:'Inter,system-ui,sans-serif',fontSize:12}} }};
+function toggleAllQ(allCb) {{
+    var checks = document.querySelectorAll('.q-filter-bar input[data-question]');
+    checks.forEach(function(cb) {{ cb.checked = allCb.checked; }});
+    filterByQuestion();
+}}
 
-var C = {{}};
+// ───────── Export CSV ─────────
+function exportDetailCSV() {{
+    var rows = document.querySelectorAll('#detail-tbody tr');
+    var csv = 'Question;Heure;Page;Temps (s);Scroll (%);Clics;Copies;Saisies;Tags\\n';
+    rows.forEach(function(row) {{
+        if (row.style.display === 'none') return;
+        var cells = row.querySelectorAll('td');
+        var line = [];
+        cells.forEach(function(c) {{
+            var txt = c.innerText.replace(/"/g, '""').replace(/;/g, ',');
+            line.push('"' + txt + '"');
+        }});
+        csv += line.join(';') + '\\n';
+    }});
+    downloadCSV(csv, 'donnees_detaillees.csv');
+}}
 
-C.arbre = echarts.init(document.getElementById('chart-arbre'));
-C.arbre.setOption({{
-    tooltip:{{ trigger:'item', enterable:true, confine:true,
-        backgroundColor:'rgba(15,23,42,0.96)', borderColor:'#334155',
-        textStyle:{{color:'#f1f5f9',fontFamily:'Inter,system-ui,sans-serif',fontSize:12}},
-        formatter:function(i){{ return i.data.tooltipDetails||i.name; }}
-    }},
-    toolbox:{{ feature:{{ saveAsImage:{{title:'Exporter en PNG',pixelRatio:2}} }} }},
-    series:[{{ type:'graph', layout:'none',
-        data:{j(nodes)}, links:{j(links)},
-        roam:true, edgeSymbol:['none','arrow'], edgeSymbolSize:[0,8]
-    }}]
-}});
+function exportReponsesCSV() {{
+    var rows = document.querySelectorAll('#reponses-table tbody tr');
+    var csv = 'Heure;Type;QuestionID;Difficulte;Donnees\\n';
+    rows.forEach(function(row) {{
+        var cells = row.querySelectorAll('td');
+        var line = [];
+        cells.forEach(function(c) {{
+            var txt = c.innerText.replace(/"/g, '""').replace(/;/g, ',');
+            line.push('"' + txt + '"');
+        }});
+        csv += line.join(';') + '\\n';
+    }});
+    downloadCSV(csv, 'reponses.csv');
+}}
 
-C.temps = echarts.init(document.getElementById('chart-temps'));
-C.temps.setOption({{
-    tooltip:tooltipDef, grid:gridDef,
-    xAxis:{{ type:'value', name:'sec', axisLabel:{{fontSize:11}}, splitLine:{{lineStyle:{{type:'dashed',color:'#f1f5f9'}}}} }},
-    yAxis:yAxisDef,
-    series:[{{ type:'bar', data:{j(temps_data)}, barMaxWidth:16,
-               itemStyle:{{color:'#3b82f6',borderRadius:[0,3,3,0]}},
-               label:{{show:true,position:'right',fontSize:10,color:'#64748b',formatter:'{{c}} s'}} }}]
-}});
-bindClickOpen(C.temps);
+function downloadCSV(csv, filename) {{
+    var bom = '\\uFEFF';
+    var blob = new Blob([bom + csv], {{ type: 'text/csv;charset=utf-8;' }});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+}}
 
-C.scroll = echarts.init(document.getElementById('chart-scroll'));
-C.scroll.setOption({{
-    tooltip:tooltipDef, grid:gridDef,
-    xAxis:{{ type:'value', max:100, name:'%', axisLabel:{{fontSize:11}}, splitLine:{{lineStyle:{{type:'dashed',color:'#f1f5f9'}}}} }},
-    yAxis:yAxisDef,
-    series:[{{ type:'bar', data:{j(scroll_items)}, barMaxWidth:16,
-               itemStyle:{{borderRadius:[0,3,3,0]}},
-               label:{{show:true,position:'right',fontSize:10,color:'#64748b',formatter:'{{c}}%'}} }}]
-}});
-bindClickOpen(C.scroll);
+// ───────── Charts ECharts ─────────
+var nodesData = {j(nodes)};
+var linksData = {j(links)};
 
-C.interactions = echarts.init(document.getElementById('chart-interactions'));
-C.interactions.setOption({{
-    tooltip:tooltipDef,
-    legend:{{ data:['Clics','Copies','Saisies'], top:0, textStyle:{{fontSize:11,fontFamily:'Inter,system-ui,sans-serif'}} }},
-    grid:{{ left:'38%', right:'8%', top:'10%', bottom:'5%' }},
-    xAxis:{{ type:'value', axisLabel:{{fontSize:11}}, splitLine:{{lineStyle:{{type:'dashed',color:'#f1f5f9'}}}} }},
-    yAxis:yAxisDef,
-    series:[
-        {{ name:'Clics',   type:'bar', stack:'t', barMaxWidth:16, data:{j(clics_data)},   itemStyle:{{color:'#6366f1'}} }},
-        {{ name:'Copies',  type:'bar', stack:'t', barMaxWidth:16, data:{j(copies_data)},  itemStyle:{{color:'#059669'}} }},
-        {{ name:'Saisies', type:'bar', stack:'t', barMaxWidth:16, data:{j(saisies_data)}, itemStyle:{{color:'#d97706'}} }}
-    ]
-}});
-bindClickOpen(C.interactions);
+// Arbre
+(function() {{
+    var dom = document.getElementById('chart-arbre');
+    var chart = echarts.init(dom);
+    window.__arbreChart = chart;
+    chart.setOption({{
+        tooltip: {{
+            trigger:'item', backgroundColor:'#1e293b', borderColor:'#334155',
+            borderWidth:1, padding:0,
+            formatter: function(p) {{
+                if (p.dataType==='node') return p.data.tooltipDetails || p.name;
+                if (p.dataType==='edge') {{
+                    var s = nodesData.find(function(n){{return n.id===p.data.source}});
+                    var t = nodesData.find(function(n){{return n.id===p.data.target}});
+                    return (s?s.name:'?') + ' → ' + (t?t.name:'?');
+                }}
+                return '';
+            }}
+        }},
+        animationDuration: 800,
+        series: [{{
+            type:'graph', layout:'none', coordinateSystem:null,
+            data: nodesData, links: linksData,
+            edgeSymbol:['none','arrow'], edgeSymbolSize:[0,8],
+            roam:true, zoom:0.9, draggable:true,
+            emphasis:{{ focus:'adjacency', lineStyle:{{ width:3 }} }},
+            lineStyle:{{ opacity:0.8 }}
+        }}]
+    }});
+}})();
 
-C.pie = echarts.init(document.getElementById('chart-pie'));
-C.pie.setOption({{
-    tooltip:{{ trigger:'item', formatter:'{{b}} : {{c}} ({{d}}%)',
-              textStyle:{{fontFamily:'Inter,system-ui,sans-serif',fontSize:12}} }},
-    series:[{{ type:'pie', radius:['42%','72%'],
-        data:{j(pie)},
-        itemStyle:{{ borderRadius:5, borderColor:'#fff', borderWidth:2 }},
-        color:['#6366f1','#059669','#d97706','#cbd5e1'],
-        label:{{ fontSize:12, fontFamily:'Inter,system-ui,sans-serif' }},
-        emphasis:{{ itemStyle:{{ shadowBlur:8, shadowColor:'rgba(0,0,0,0.15)' }} }}
-    }}]
-}});
+// Temps passé
+(function() {{
+    var chart = echarts.init(document.getElementById('chart-temps'));
+    chart.setOption({{
+        tooltip:{{ trigger:'axis' }},
+        grid:{{ left:180, right:40, top:10, bottom:30 }},
+        xAxis:{{ type:'value', name:'Secondes' }},
+        yAxis:{{ type:'category', data:{j(labels)}, inverse:true,
+                 axisLabel:{{ fontSize:11, width:160, overflow:'truncate' }} }},
+        series:[{{ type:'bar', data:{j(temps_data)}, color:'#3b82f6',
+                   label:{{ show:true, position:'right', fontSize:11 }} }}]
+    }});
+}})();
 
-C.domaines = echarts.init(document.getElementById('chart-domaines'));
-C.domaines.setOption({{
-    tooltip:{{ trigger:'axis', textStyle:{{fontFamily:'Inter,system-ui,sans-serif',fontSize:12}} }},
-    grid:{{ left:'30%', right:'10%', top:'5%', bottom:'7%' }},
-    xAxis:{{ type:'value', minInterval:1, axisLabel:{{fontSize:11}}, splitLine:{{lineStyle:{{type:'dashed',color:'#f1f5f9'}}}} }},
-    yAxis:{{ type:'category', data:{j(doms_labels)}, inverse:true, axisLabel:{{fontSize:12}} }},
-    series:[{{ type:'bar', data:{j(doms_values)}, barMaxWidth:16,
-               itemStyle:{{color:'#475569',borderRadius:[0,3,3,0]}},
-               label:{{show:true,position:'right',fontSize:11,color:'#475569'}} }}]
-}});
+// Scroll
+(function() {{
+    var chart = echarts.init(document.getElementById('chart-scroll'));
+    chart.setOption({{
+        tooltip:{{ trigger:'axis' }},
+        grid:{{ left:180, right:40, top:10, bottom:30 }},
+        xAxis:{{ type:'value', max:100, name:'%' }},
+        yAxis:{{ type:'category', data:{j(labels)}, inverse:true,
+                 axisLabel:{{ fontSize:11, width:160, overflow:'truncate' }} }},
+        series:[{{ type:'bar', data:{j(scroll_items)},
+                   label:{{ show:true, position:'right', fontSize:11, formatter:'{{c}}%' }} }}]
+    }});
+}})();
 
-window.addEventListener('resize', function() {{ for(var k in C){{ if(C[k]) C[k].resize(); }} }});
+// Pie interactions
+(function() {{
+    var chart = echarts.init(document.getElementById('chart-pie'));
+    chart.setOption({{
+        tooltip:{{ trigger:'item' }},
+        color:['#6366f1','#059669','#d97706','#94a3b8'],
+        series:[{{ type:'pie', radius:['40%','70%'], data:{j(pie)},
+                   label:{{ fontSize:12 }},
+                   emphasis:{{ itemStyle:{{ shadowBlur:10, shadowColor:'rgba(0,0,0,0.2)' }} }} }}]
+    }});
+}})();
+
+// Domaines
+(function() {{
+    var chart = echarts.init(document.getElementById('chart-domaines'));
+    chart.setOption({{
+        tooltip:{{ trigger:'axis' }},
+        grid:{{ left:140, right:30, top:10, bottom:30 }},
+        xAxis:{{ type:'value' }},
+        yAxis:{{ type:'category', data:{j(doms_labels)}, inverse:true,
+                 axisLabel:{{ fontSize:11, width:120, overflow:'truncate' }} }},
+        series:[{{ type:'bar', data:{j(doms_values)}, color:'#8b5cf6',
+                   label:{{ show:true, position:'right', fontSize:11 }} }}]
+    }});
+}})();
 </script>
 </body>
 </html>"""
 
     with open(fichier_sortie, 'w', encoding='utf-8') as f:
         f.write(html)
-    print(f"Dashboard genere : {fichier_sortie}")
-    print(f"  {len(visites)} visites | {tot['pages']} pages | "
-          f"{tot['clics']} clics | {tot['copies']} copies | {tot['saisies']} saisies | "
-          f"{tot['back']} back | {tot['forward']} fwd | {tot['closed']} fermes")
+
+    print(f"Dashboard généré : {fichier_sortie}")
+    print(f"  - {len(visites)} visites, {tot['pages']} pages uniques")
+    print(f"  - {nb_reponses} réponses au questionnaire")
+    print(f"  - {len(question_periods)} périodes de questions détectées")
+    if has_questions:
+        for p in question_periods:
+            print(f"    [{p['label']}] {p['type']} — {p.get('questionId', '?')}")
 
 
-if __name__ == "__main__":
-    generer_dashboard(
-        "Data_of_studies/DB_WebNavigation_test1_questionnaire.json",
-        "Visualisation/dashboardTest1Questionnaire.html"
-    )
+# ═══════════════════════════════════════════════════════════
+# POINT D'ENTRÉE
+# ═══════════════════════════════════════════════════════════
+
+if __name__ == '__main__':
+    nom_dossier_data = "Data_of_studies"
+    nom_fichier_entree = "session_session_1776695169378_0mrnyu_2026-04-20.json"
+
+    entree = nom_dossier_data + "/" + nom_fichier_entree
+    sortie = "Visualisation/"+nom_fichier_entree.replace(".json", "_dashboard.html")
+
+    generer_dashboard(entree, sortie)

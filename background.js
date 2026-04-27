@@ -2,8 +2,7 @@
 // 🆕 CONFIGURATION ENVOI AUTOMATIQUE
 // =========================================================
 const SERVER_URL = "http://localhost:3000/api/collecte";
-const API_KEY = "976ac3d56d0738d70eaf2b6bf1807a139bc71cde5c81b19c039058e35221e3a3";  // Même clé que dans .env
-
+const API_KEY = "976ac3d56d0738d70eaf2b6bf1807a139bc71cde5c81b19c039058e35221e3a3";
 
 // =========================================================
 // ÉTAT EN MÉMOIRE
@@ -16,52 +15,36 @@ let currentVisitByTab = {};
 let stateLoaded = false;
 let currentSessionId = null;
 let autoSendInterval = null;
-// =========================================================
-// PARTICIPANT ID — GÉNÉRÉ UNE SEULE FOIS À L'INSTALLATION
-// =========================================================
 let participantId = null;
 
+// =========================================================
+// PARTICIPANT ID
+// =========================================================
 async function getOrCreateParticipantId() {
     const storage = await chrome.storage.local.get(['participantId']);
-
     if (storage.participantId) {
         participantId = storage.participantId;
     } else {
-        // ======================================================
-        // FORMAT : P-<timestamp_base36>-<random_4chars>
-        // Exemple : P-m2kf7x9-a3f8
-        // ======================================================
-
-        const timestamp = Date.now().toString(36);        // ex: "m2kf7x9" (compact)
-        const random = Math.random().toString(36).slice(2, 6); // ex: "a3f8"
+        const timestamp = Date.now().toString(36);
+        const random = Math.random().toString(36).slice(2, 6);
         participantId = `P-${timestamp}-${random}`;
-
         await chrome.storage.local.set({ participantId });
         console.log("🆕 Nouveau participantId généré:", participantId);
     }
-
     console.log("👤 ParticipantId:", participantId);
     return participantId;
 }
 
-// Appeler au démarrage
 getOrCreateParticipantId();
-
-
 console.log("🔄 SERVICE WORKER DÉMARRÉ");
 
 // =========================================================
-//     PERSISTENCE dans chrome.storage.local
-//    → survit au redémarrage du service worker
+// PERSISTENCE
 // =========================================================
 async function loadState() {
     const res = await chrome.storage.local.get([
-        'isTracking',
-        'sw_sessionData',
-        'sw_tabHistory',
-        'sw_currentVisitByTab',
-        'sw_visitCounter',
-        'sw_sessionId'
+        'isTracking', 'sw_sessionData', 'sw_tabHistory',
+        'sw_currentVisitByTab', 'sw_visitCounter', 'sw_sessionId'
     ]);
     isTracking = res.isTracking || false;
     sessionData = res.sw_sessionData || [];
@@ -70,22 +53,19 @@ async function loadState() {
     visitCounter = res.sw_visitCounter || 0;
     currentSessionId = res.sw_sessionId || null;
     stateLoaded = true;
-
     if (isTracking) startAutoSend();
-
-    console.log(" État restauré — sessionData.length =", sessionData.length, "| isTracking=", isTracking, "| visitCounter=", visitCounter);
+    console.log("✅ État restauré — sessionData.length =", sessionData.length,
+        "| isTracking=", isTracking, "| visitCounter=", visitCounter);
 }
 
 let saveTimer = null;
 
 function saveState() {
-    // Debounce 1s pour les événements fréquents (clics, scroll…)
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(_doSave, 1000);
 }
 
 function saveStateNow() {
-    // Sauvegarde immédiate pour les opérations critiques
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     _doSave();
@@ -101,10 +81,8 @@ function _doSave() {
     });
 }
 
-// Charger l'état au démarrage
 loadState();
 
-// Écouter les changements de isTracking depuis popup.js
 chrome.storage.onChanged.addListener((changes) => {
     if (changes.isTracking) {
         isTracking = changes.isTracking.newValue;
@@ -113,10 +91,12 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 
 // =========================================================
-// 🆕 ENVOI AUTOMATIQUE VERS LE SERVEUR
+// 🔧 ENVOI VERS LE SERVEUR — INCRÉMENTAL
 // =========================================================
 async function sendToServer(isFinal = false) {
-    console.log("📤 sendToServer appelé | isFinal=", isFinal, "| sessionData.length=", sessionData.length, "| sessionId=", currentSessionId);
+    console.log("📤 sendToServer | isFinal=", isFinal,
+        "| sessionData.length=", sessionData.length,
+        "| sessionId=", currentSessionId);
 
     if (sessionData.length === 0 || !currentSessionId) {
         console.warn("⚠️ Envoi annulé : sessionData vide ou pas de sessionId");
@@ -125,14 +105,24 @@ async function sendToServer(isFinal = false) {
 
     if (!participantId) await getOrCreateParticipantId();
 
-    // --- Nettoyage : dédupliquer les page_quittee ---
+    // ── 🔧 NOUVEAU : ne prendre que les événements non synchronisés ──
+    const unsyncedEvents = sessionData.filter(e => !e._synced);
+
+    if (unsyncedEvents.length === 0) {
+        console.log("✅ Tous les événements déjà synchronisés (",
+            sessionData.length, "total)");
+        return { success: true, message: "Déjà à jour", count: 0 };
+    }
+
+    // --- Nettoyage : dédupliquer les page_quittee non sync ---
     const cleanedData = [];
     const bestPageQuittee = {};
 
-    for (const event of sessionData) {
+    for (const event of unsyncedEvents) {
         if (event.type === 'page_quittee') {
             const vid = event.visitId;
-            if (!bestPageQuittee[vid] || event.temps_passe_ms > bestPageQuittee[vid].temps_passe_ms) {
+            if (!bestPageQuittee[vid] ||
+                event.temps_passe_ms > bestPageQuittee[vid].temps_passe_ms) {
                 bestPageQuittee[vid] = event;
             }
         } else {
@@ -145,15 +135,15 @@ async function sendToServer(isFinal = false) {
 
     cleanedData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    const dataToSend = cleanedData.map(event => ({
+    // ── 🔧 NOUVEAU : retirer le flag _synced avant envoi ──
+    const dataToSend = cleanedData.map(({ _synced, ...event }) => ({
         ...event,
         sessionId: currentSessionId,
         participantId: participantId
     }));
 
-    console.log("📊 Données à envoyer:", dataToSend.length, "événements");
-    console.log("📊 Premier événement:", JSON.stringify(dataToSend[0]));
-    console.log("📊 URL serveur:", SERVER_URL);
+    console.log("📊 À envoyer:", dataToSend.length, "nouveaux événements (sur",
+        sessionData.length, "total)");
 
     try {
         const response = await fetch(SERVER_URL, {
@@ -165,30 +155,37 @@ async function sendToServer(isFinal = false) {
             body: JSON.stringify(dataToSend)
         });
 
-        console.log("📡 Réponse HTTP:", response.status, response.statusText);
-
         const responseBody = await response.json().catch(() => ({}));
-        console.log("📡 Body réponse:", JSON.stringify(responseBody));
+        console.log("📡 Réponse:", response.status, JSON.stringify(responseBody));
 
         if (!response.ok) {
             throw new Error(responseBody.erreur || `HTTP ${response.status}`);
         }
 
-        console.log("✅ Envoi réussi :", responseBody.message);
-        return { success: true, message: responseBody.message, count: dataToSend.length };
+        // ── 🔧 NOUVEAU : marquer comme synchronisés ──
+        for (const event of unsyncedEvents) {
+            event._synced = true;
+        }
+        saveState(); // Persister les flags
+
+        console.log("✅ Envoi réussi :", responseBody.message,
+            "| nouveaux:", dataToSend.length);
+        return {
+            success: true,
+            message: responseBody.message,
+            count: dataToSend.length
+        };
 
     } catch (error) {
-        const errorData = await response.json();
-        console.error("❌ Détails validation:", JSON.stringify(errorData.details || []));
-        throw new Error(errorData.erreur || `HTTP ${response.status}`);
+        // 🔧 FIX : le catch n'accède plus à `response` hors scope
         console.error("❌ Échec envoi :", error.message);
-        console.error("❌ Stack:", error.stack);
         return { success: false, error: error.message };
     }
 }
 
-
-// Envoi toutes les 3 minutes pendant le tracking
+// =========================================================
+// ENVOI AUTOMATIQUE
+// =========================================================
 function startAutoSend() {
     stopAutoSend();
     autoSendInterval = setInterval(() => {
@@ -196,7 +193,7 @@ function startAutoSend() {
             console.log("⏰ Envoi automatique périodique...");
             sendToServer(false);
         }
-    }, 3 * 60 * 1000);  // 3 minutes
+    }, 3 * 60 * 1000);
     console.log("⏰ Envoi automatique activé (toutes les 3 min)");
 }
 
@@ -208,18 +205,13 @@ function stopAutoSend() {
 }
 
 // =========================================================
-//    RETRY INTELLIGENT
-//    → vérifie que le visitId est toujours courant avant chaque retry
-//    → empêche les retries parasites d'écraser des données
+// RETRY INTELLIGENT
 // =========================================================
 function sendUrlChangedWithRetry(tabId, url, visitId) {
     function trySend() {
-        // Si un nouveau visitId a été assigné à cet onglet, abandonner
         if (currentVisitByTab[tabId] !== visitId) return;
         chrome.tabs.sendMessage(tabId, {
-            action: "url_changed",
-            newUrl: url,
-            visitId: visitId
+            action: "url_changed", newUrl: url, visitId: visitId
         }).catch(() => {});
     }
     trySend();
@@ -227,9 +219,8 @@ function sendUrlChangedWithRetry(tabId, url, visitId) {
     setTimeout(trySend, 600);
 }
 
-
 // =========================================================
-// NAVIGATION PRINCIPALE : onUpdated
+// NAVIGATION : onUpdated
 // =========================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (!stateLoaded || !isTracking || !changeInfo.url) return;
@@ -254,7 +245,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         timestamp: new Date().toISOString()
     });
 
-    // --- Extraction q= Google → saisie sur le parent newtab ---
     if (url.includes('google.') && url.includes('/search')) {
         try {
             const q = new URL(url).searchParams.get('q');
@@ -273,47 +263,39 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
 
     tabHistory[tabId] = url;
-    saveStateNow(); // Sauvegarde immédiate (navigation = critique)
-
-    // utiliser le retry intelligent
+    saveStateNow();
     sendUrlChangedWithRetry(tabId, url, visitId);
 });
 
-
 // =========================================================
-//    onCommitted — FILET DE SÉCURITÉ
-//    → crée l'entrée navigation si onUpdated l'a ratée
-//    → tague back_forward quand Chrome le rapporte (rare mais utile)
+// onCommitted — FILET DE SÉCURITÉ
 // =========================================================
 chrome.webNavigation.onCommitted.addListener((details) => {
     if (!stateLoaded || !isTracking || details.frameId !== 0) return;
 
     const tabId = details.tabId;
     const url = details.url;
-
     console.log("🧭 onCommitted →", url, "| transition=", details.transitionType);
 
-    // Ignorer les pages internes
     if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('about:')) return;
 
-    // Chercher si onUpdated a déjà créé une entrée pour cette URL sur cet onglet
     let alreadyHandled = false;
     for (let i = sessionData.length - 1; i >= 0; i--) {
         const ev = sessionData[i];
         if (ev.type === 'navigation' && ev.tabId === tabId) {
             if (ev.url === url) {
-                // Déjà créé par onUpdated → juste taguer si back_forward
                 if (details.transitionType === 'back_forward') {
                     ev.transitionType = 'back_forward';
+                    // 🔧 Si déjà synced, re-marquer pour renvoi
+                    if (ev._synced) ev._synced = false;
                     saveState();
                 }
                 alreadyHandled = true;
             }
-            break; // Ne regarder que le dernier event navigation de cet onglet
+            break;
         }
     }
 
-    // 🔧 Si onUpdated a raté cette navigation → créer l'entrée ici
     if (!alreadyHandled) {
         console.log("⚡ onCommitted FALLBACK — création navigation pour", url);
         const visitId = `visit_${++visitCounter}`;
@@ -336,7 +318,6 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     }
 });
 
-
 // =========================================================
 // FERMETURE D'ONGLET
 // =========================================================
@@ -354,16 +335,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     saveStateNow();
 });
 
-
 // =========================================================
 // MESSAGES
 // =========================================================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
-    // --- Actions du popup ---
-
     if (message.action === "get_data") {
-        sendResponse({ data: sessionData });
+        // 🔧 Retirer les flags _synced de la réponse
+        const cleanData = sessionData.map(({ _synced, ...rest }) => rest);
+        sendResponse({ data: cleanData });
         return true;
     }
 
@@ -373,7 +353,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         tabHistory = {};
         currentVisitByTab = {};
         visitCounter = 0;
-        saveStateNow(); // 🔧 Persister le clear
+        saveStateNow();
         sendResponse({ success: true });
         return true;
     }
@@ -387,15 +367,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === "start_tracking") {
-        
         console.log("🚀 start_tracking | sessionData=", sessionData.length);
-
-        // forcer isTracking IMMÉDIATEMENT en mémoire
-        //    (le storage.onChanged arrivera plus tard)
         isTracking = true;
         currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
         console.log("🆔 Nouveau sessionId:", currentSessionId);
-
         startAutoSend();
 
         chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
@@ -416,11 +391,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
                 tabHistory[tab.id] = currentUrl;
                 saveStateNow();
-
                 chrome.tabs.sendMessage(tab.id, {
-                    action: "url_changed",
-                    newUrl: currentUrl,
-                    visitId: visitId
+                    action: "url_changed", newUrl: currentUrl, visitId: visitId
                 }).catch(() => {});
             }
             sendResponse({ success: true });
@@ -440,15 +412,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    //    (appelé par popup.js APRÈS que force_save_stats ait été envoyé)
     if (message.action === "stop_tracking") {
         console.log("🛑 stop_tracking | sessionData=", sessionData.length);
         stopAutoSend();
         saveStateNow();
-
-        // 🔍 DEBUG : est-ce qu'on arrive ici ?
         console.log("🛑 Appel de sendToServer(true)...");
-
         sendToServer(true).then(result => {
             console.log("🛑 Résultat sendToServer:", JSON.stringify(result));
             sendResponse(result);
@@ -456,47 +424,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-
     if (message.action === "send_to_server") {
-    sendToServer(true).then(result => {
-        sendResponse(result);
-    });
-    return true;
+        sendToServer(true).then(result => {
+            sendResponse(result);
+        });
+        return true;
     }
 
-
-    // --- Événements des content scripts ---
-
-    // FIX BUG  (doublons) : DÉDUPLICATION page_quittee
-    //    → on garde celui avec le plus de temps (le plus complet)
-    // FIX BUG  : on accepte page_quittee même si isTracking vient de
-    //    passer à false (race condition avec stop_tracking)
+    // --- page_quittee : accepté même si tracking vient de s'arrêter ---
     if (message.type === 'page_quittee' && message.visitId) {
-        console.log("📩 page_quittee reçu | visitId=", message.visitId,
-                     "| temps=", message.temps_passe_ms,
-                     "| scroll=", message.maxScroll,
-                     "| data count=", sessionData.length);
+        console.log("📩 page_quittee | visitId=", message.visitId,
+            "| temps=", message.temps_passe_ms,
+            "| scroll=", message.maxScroll);
 
         if (sender.tab && sender.tab.id) {
             message.tabId = sender.tab.id;
         }
 
-        // Chercher un page_quittee existant pour ce visitId
         const existingIdx = sessionData.findIndex(
             e => e.type === 'page_quittee' && e.visitId === message.visitId
         );
 
         if (existingIdx !== -1) {
             const existing = sessionData[existingIdx];
-            // Garder celui avec le plus de temps passé
             if (message.temps_passe_ms >= existing.temps_passe_ms) {
+                // 🔧 Le remplacement enlève _synced → sera re-envoyé
                 sessionData[existingIdx] = message;
-                console.log("🔄 page_quittee MIS À JOUR pour", message.visitId,
-                            "| temps:", existing.temps_passe_ms, "→", message.temps_passe_ms,
-                            "| scroll:", existing.maxScroll, "→", message.maxScroll);
+                console.log("🔄 page_quittee MIS À JOUR pour", message.visitId);
             } else {
-                console.log("⏭️ page_quittee IGNORÉ pour", message.visitId,
-                            "| existant:", existing.temps_passe_ms, "> nouveau:", message.temps_passe_ms);
+                console.log("⏭️ page_quittee IGNORÉ (existant meilleur)");
             }
         } else {
             sessionData.push(message);
@@ -505,17 +461,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
     }
 
-    // Autres événements (clic, copie, saisie) : seulement si tracking actif
+    // Autres événements
     if (isTracking && message.type) {
-        console.log("📩 Message reçu :", message.type, "| visitId=", message.visitId, "| data count=", sessionData.length);
-
+        console.log("📩 Reçu :", message.type, "| visitId=", message.visitId);
         if (sender.tab && sender.tab.id) {
             message.tabId = sender.tab.id;
             if (!message.visitId && currentVisitByTab[sender.tab.id]) {
                 message.visitId = currentVisitByTab[sender.tab.id];
             }
         }
-
         sessionData.push(message);
         saveState();
     }
