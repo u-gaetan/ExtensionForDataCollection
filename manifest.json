@@ -1,20 +1,53 @@
 {
-    "manifest_version": 3,
-    "name": "Tracker Web - Ulaval",
-    "version": "1.0",
-    "description": "Capture comportementale avec ON/OFF, scroll et temps",
-    "permissions": ["activeTab","storage", "tabs","webNavigation"],
-    "host_permissions": ["<all_urls>"],
-    "background": {
-      "service_worker": "background.js"
+  "manifest_version": 3,
+  "name": "Étude Navigation Web — Université Laval",
+  "version": "1.0",
+  "description": "Extension de recherche universitaire (Université Laval) permettant d'étudier les habitudes de navigation web dans le cadre d'une étude approuvée par le comité d'éthique CÉRUL. Les données collectées sont anonymisées et chiffrées.",
+  "permissions": ["activeTab", "storage", "tabs", "webNavigation"],
+  "host_permissions": ["<all_urls>"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content/state.js",
+        "content/scroll-tracker.js",
+        "content/time-tracker.js",
+        "content/interaction-tracker.js",
+        "content/content.js"
+      ]
     },
-    "content_scripts":[
-      {
-        "matches": ["<all_urls>"],
-        "js": ["content.js"]
-      }
-    ],
-    "action": {
-      "default_popup": "popup.html"
+    {
+      "matches": [
+        "*://*.google.com/search*",
+        "*://*.google.fr/search*",
+        "*://*.google.ca/search*",
+        "*://*.google.be/search*",
+        "*://*.google.ch/search*"
+      ],
+      "js": ["content/block-ai-overview.js"],
+      "run_at": "document_start"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked/blocked.html"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
 }
