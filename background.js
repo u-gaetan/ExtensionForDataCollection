@@ -1,8 +1,9 @@
 // =========================================================
 // 🆕 CONFIGURATION ENVOI AUTOMATIQUE
 // =========================================================
-const SERVER_URL = "http://localhost:3000/api/collecte";
-const API_KEY = "976ac3d56d0738d70eaf2b6bf1807a139bc71cde5c81b19c039058e35221e3a3";
+const SERVER_URL = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/api/collecte";
+const SERVER_URL_LOCAL = "http://localhost:3000/api/collecte";
+const API_KEY = "de23c11b1d7c33af3dc6f249a18cdc29b529443af8f69148084992caa50c8515";
 
 // =========================================================
 // ÉTAT EN MÉMOIRE

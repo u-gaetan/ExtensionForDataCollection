@@ -37,7 +37,7 @@ toggleBtn.addEventListener('click', () => {
                         chrome.runtime.sendMessage({ action: "get_extension_ids" }, (ids) => {
                             if (ids && ids.participantId && ids.sessionId) {
                                 const questionnaireUrl =
-                                    `http://localhost:3000/questionnaire/?pid=${ids.participantId}&sid=${ids.sessionId}`;
+                                    `https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/?pid=${ids.participantId}&sid=${ids.sessionId}`;
                                 chrome.tabs.create({ url: questionnaireUrl });
                             }
                         });
