@@ -15,8 +15,7 @@ function updateTimeAndSend() {
 
   if (!currentVisitId) return;
 
-  chrome.runtime
-    .sendMessage({
+  chrome.runtime.sendMessage({
       type: "page_quittee",
       visitId: currentVisitId,
       url: window.location.href,

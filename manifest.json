@@ -3,7 +3,7 @@
   "name": "Étude Navigation Web — Université Laval",
   "version": "1.0",
   "description": "Extension de recherche universitaire (Université Laval) permettant d'étudier les habitudes de navigation web dans le cadre d'une étude approuvée par le comité d'éthique CÉRUL. Les données collectées sont anonymisées et chiffrées.",
-  "permissions": ["activeTab", "storage", "tabs", "webNavigation"],
+  "permissions": ["activeTab", "storage", "tabs", "webNavigation", "management"],
   "host_permissions": ["<all_urls>"],
   "icons": {
     "16": "icons/icon16.png",
@@ -21,7 +21,9 @@
         "content/scroll-tracker.js",
         "content/time-tracker.js",
         "content/interaction-tracker.js",
-        "content/content.js"
+        "content/content.js",
+        "content/study-banner.js",
+      "content/questionnaire-watcher.js"
       ]
     },
     {
@@ -38,7 +40,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["blocked/blocked.html"],
+      "resources": ["blocked/blocked.html", "uninstall/uninstall.html"],
       "matches": ["<all_urls>"]
     }
   ],

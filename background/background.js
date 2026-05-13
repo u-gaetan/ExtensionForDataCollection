@@ -1,6 +1,3 @@
-// =========================================================
-// SERVICE WORKER — POINT D'ENTRÉE
-// =========================================================
 importScripts(
   "config.js",
   "state.js",
@@ -9,13 +6,12 @@ importScripts(
   "messages.js"
 );
 
-// Initialisation
 getOrCreateParticipantId();
 loadState();
 
-// Écouter les changements d'état du tracking
-chrome.storage.onChanged.addListener((changes) => {
+chrome.storage.onChanged.addListener(function (changes) {
   if (changes.isTracking) {
     isTracking = changes.isTracking.newValue;
+    updateBadge(isTracking);
   }
 });

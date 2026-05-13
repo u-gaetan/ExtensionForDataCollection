@@ -81,6 +81,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   tabHistory[tabId] = url;
   saveStateNow();
   sendUrlChangedWithRetry(tabId, url, visitId);
+
+  if (url.includes("/questionnaire/")) {
+    questionnaireTabId = tabId;
+    questionnaireUrl = url;
+    chrome.storage.local.set({
+      questionnaireTabId: tabId,
+      questionnaireUrl: url,
+    });
+  }
 });
 
 // =========================================================
@@ -140,6 +149,15 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     saveStateNow();
     sendUrlChangedWithRetry(tabId, url, visitId);
   }
+
+  if (url.includes("/questionnaire/")) {
+    questionnaireTabId = tabId;
+    questionnaireUrl = url;
+    chrome.storage.local.set({
+      questionnaireTabId: tabId,
+      questionnaireUrl: url,
+    });
+  }
 });
 
 // =========================================================
@@ -159,4 +177,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   delete currentVisitByTab[tabId];
   delete tabHistory[tabId];
   saveStateNow();
+
+  if (tabId === questionnaireTabId) {
+    questionnaireTabId = null;
+    chrome.storage.local.set({ questionnaireTabId: null });
+  }
 });
