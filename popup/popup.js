@@ -27,7 +27,6 @@ chrome.storage.local.get(
 
 // =========================================================
 // RÉAGIR AUX CHANGEMENTS EN TEMPS RÉEL
-// (si le questionnaire se termine pendant que le popup est ouvert)
 // =========================================================
 chrome.storage.onChanged.addListener(function (changes) {
   if (changes.studyCompleted && changes.studyCompleted.newValue === true) {
@@ -53,124 +52,70 @@ toggleBtn.addEventListener("click", function () {
   chrome.storage.local.get(
     ["isTracking", "studyCompleted"],
     function (result) {
-      // Si l'étude est terminée, proposer de recommencer
+      
+      // VERROUILLAGE DÉFINITIF : Impossible de relancer l'étude
       if (result.studyCompleted) {
-        if (
-          !confirm(
-            "L'étude précédente est terminée. Voulez-vous en démarrer une nouvelle ?"
-          )
-        )
-          return;
-        chrome.storage.local.set({ studyCompleted: false });
+        return; 
       }
 
       var newState = !(result.isTracking || false);
 
       if (newState === true) {
         // ── DÉMARRAGE ──
-        chrome.runtime.sendMessage(
-          { action: "get_data" },
-          function (response) {
-            var hasData =
-              response && response.data && response.data.length > 0;
-
-            if (hasData) {
-              if (
-                !confirm("Des données existent. Effacer et redémarrer ?")
-              )
-                return;
-            }
-
-            chrome.runtime.sendMessage({ action: "clear_data" }, function () {
-              chrome.runtime.sendMessage(
-                { action: "start_tracking" },
-                function () {
-                  chrome.storage.local.set({ isTracking: true }, function () {
-                    updateUI(true);
-                    showStatus("🟢 Naviguez normalement !", "success");
-                  });
-
-                  chrome.runtime.sendMessage(
-                    { action: "get_extension_ids" },
-                    function (ids) {
-                      if (ids && ids.participantId && ids.sessionId) {
-                        var questionnaireUrl =
-                          "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/" +
-                          "?pid=" +
-                          ids.participantId +
-                          "&sid=" +
-                          ids.sessionId;
-
-                        chrome.tabs.create(
-                          { url: questionnaireUrl },
-                          function (tab) {
-                            // Stocker l'onglet du questionnaire
-                            chrome.runtime.sendMessage({
-                              action: "set_questionnaire_tab",
-                              tabId: tab.id,
-                              url: questionnaireUrl,
-                            });
-                          }
-                        );
-                      }
-                    }
-                  );
-                }
-              );
-            });
+        chrome.runtime.sendMessage({ action: "get_data" }, function (response) {
+          var hasData = response && response.data && response.data.length > 0;
+          if (hasData) {
+            if (!confirm("Des données existent. Effacer et redémarrer ?")) return;
           }
-        );
+
+          chrome.runtime.sendMessage({ action: "clear_data" }, function () {
+            chrome.runtime.sendMessage({ action: "get_extension_ids" }, function (ids) {
+              if (ids && ids.participantId) {
+                var questionnaireUrl =
+                  "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/" +
+                  "?pid=" + ids.participantId;
+
+                chrome.tabs.create({ url: questionnaireUrl }, function (tab) {
+                  chrome.runtime.sendMessage({
+                    action: "set_questionnaire_tab",
+                    tabId: tab.id,
+                    url: questionnaireUrl,
+                  });
+                });
+                showStatus("⏳ En attente de votre consentement...", "info");
+              }
+            });
+          });
+        });
       } else {
         // ── ARRÊT MANUEL ──
         toggleBtn.disabled = true;
         showStatus("⏳ Envoi des données en cours...", "info");
 
-        chrome.tabs.query(
-          { active: true, currentWindow: true },
-          function (tabs) {
-            var sendStop = function () {
-              chrome.runtime.sendMessage(
-                { action: "stop_tracking" },
-                function (result) {
-                  chrome.storage.local.set(
-                    { isTracking: false },
-                    function () {
-                      updateUI(false);
-                      toggleBtn.disabled = false;
-
-                      if (result && result.success) {
-                        showStatus(
-                          "✅ Données envoyées ! Merci.",
-                          "success"
-                        );
-                      } else {
-                        showStatus(
-                          "⚠️ Envoi échoué. Données sauvegardées localement.",
-                          "error"
-                        );
-                      }
-                    }
-                  );
+        chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+          var sendStop = function () {
+            chrome.runtime.sendMessage({ action: "stop_tracking" }, function (result) {
+              chrome.storage.local.set({ isTracking: false }, function () {
+                updateUI(false);
+                toggleBtn.disabled = false;
+                if (result && result.success) {
+                  showStatus("✅ Données envoyées ! Merci.", "success");
+                } else {
+                  showStatus("⚠️ Envoi échoué. Données sauvegardées localement.", "error");
                 }
-              );
-            };
+              });
+            });
+          };
 
-            if (tabs.length > 0 && tabs[0].id) {
-              chrome.tabs.sendMessage(
-                tabs[0].id,
-                { action: "force_save_stats" },
-                function () {
-                  if (chrome.runtime.lastError) {
-                    /* ignoré */
-                  }
-                  sendStop();
-                }
-              );
-            } else {
+          if (tabs.length > 0 && tabs[0].id) {
+            chrome.tabs.sendMessage(tabs[0].id, { action: "force_save_stats" }, function () {
+              if (chrome.runtime.lastError) {}
               sendStop();
-            }
+            });
+          } else {
+            sendStop();
           }
-        );
+        });
       }
     }
   );
@@ -180,31 +125,24 @@ toggleBtn.addEventListener("click", function () {
 // BOUTON RETOUR AU QUESTIONNAIRE
 // =========================================================
 questionnaireBtn.addEventListener("click", function () {
-  chrome.runtime.sendMessage(
-    { action: "get_questionnaire_info" },
-    function (info) {
-      if (!info || !info.url) {
-        showStatus("❌ URL du questionnaire introuvable.", "error");
-        return;
-      }
-
-      if (info.tabId) {
-        // Essayer de réactiver l'onglet existant
-        chrome.tabs.get(info.tabId, function (tab) {
-          if (chrome.runtime.lastError || !tab) {
-            // L'onglet a été fermé → ouvrir un nouveau
-            chrome.tabs.create({ url: info.url });
-          } else {
-            // L'onglet existe → le mettre au premier plan
-            chrome.tabs.update(info.tabId, { active: true });
-            chrome.windows.update(tab.windowId, { focused: true });
-          }
-        });
-      } else {
-        chrome.tabs.create({ url: info.url });
-      }
+  chrome.runtime.sendMessage({ action: "get_questionnaire_info" }, function (info) {
+    if (!info || !info.url) {
+      showStatus("❌ URL du questionnaire introuvable.", "error");
+      return;
     }
-  );
+    if (info.tabId) {
+      chrome.tabs.get(info.tabId, function (tab) {
+        if (chrome.runtime.lastError || !tab) {
+          chrome.tabs.create({ url: info.url });
+        } else {
+          chrome.tabs.update(info.tabId, { active: true });
+          chrome.windows.update(tab.windowId, { focused: true });
+        }
+      });
+    } else {
+      chrome.tabs.create({ url: info.url });
+    }
+  });
 });
 
 // =========================================================
@@ -213,10 +151,7 @@ questionnaireBtn.addEventListener("click", function () {
 uninstallBtn.addEventListener("click", function () {
   chrome.runtime.sendMessage({ action: "uninstall_self" }, function (response) {
     if (chrome.runtime.lastError || !response || !response.success) {
-      // Fallback : ouvrir la page de tuto
-      chrome.tabs.create({
-        url: chrome.runtime.getURL("uninstall/uninstall.html"),
-      });
+      alert("Faites un clic droit sur l'icône de l'extension et cliquez sur 'Supprimer de Chrome'.");
     }
   });
 });

@@ -35,7 +35,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (message.action === "start_tracking") {
     isTracking = true;
     studyCompleted = false;
-    currentSessionId = "session_" + Date.now() + "_" + Math.random().toString(36).substr(2, 6);
+
+    chrome.storage.local.set({ isTracking: true, studyCompleted: false });
     updateBadge(true);
     startAutoSend();
 
@@ -73,7 +74,6 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       if (!participantId) await getOrCreateParticipantId();
       sendResponse({
         participantId: participantId,
-        sessionId: currentSessionId,
         isTracking: isTracking,
         studyCompleted: studyCompleted
       });
@@ -119,35 +119,29 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   }
 
-    if (message.action === "questionnaire_completed") {
-      if (!isTracking) {
-        sendResponse({ success: false, error: "Pas en cours" });
-        return true;
-      }
-
-      studyCompleted = true;
-      isTracking = false;
-      stopAutoSend();
-      updateBadge(false);
-
-      chrome.storage.local.set({
-        isTracking: false,
-        studyCompleted: true
-      });
-      saveStateNow();
-
-      // Ouvrir la page uninstall IMMÉDIATEMENT (pas d'attente)
-      chrome.tabs.create({
-        url: chrome.runtime.getURL("uninstall/uninstall.html")
-      });
-
-      // Envoyer les données en arrière-plan (le participant n'attend pas)
-      sendToServer(true);
-
-      sendResponse({ success: true });
+  if (message.action === "questionnaire_completed") {
+    if (!isTracking) {
+      sendResponse({ success: false, error: "Pas en cours" });
       return true;
     }
 
+    studyCompleted = true;
+    isTracking = false;
+    stopAutoSend();
+    updateBadge(false);
+
+    chrome.storage.local.set({
+      isTracking: false,
+      studyCompleted: true
+    });
+    saveStateNow();
+
+    // Envoyer les données en arrière-plan (le participant n'attend pas)
+    sendToServer(true);
+
+    sendResponse({ success: true });
+    return true;
+  }
 
   if (message.action === "uninstall_self") {
     try {
@@ -193,4 +187,77 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     sessionData.push(message);
     saveState();
   }
+
+  // --- GESTION DES PHASES (Unique) ---
+  if (message.action === "set_phase") {
+    currentStudyPhase = message.phase;
+    if (message.phase === "research") {
+      memoryEmergencyBypass = {}; // Réinitialisation des urgences quand on revient en recherche
+    }
+    saveStateNow();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // --- COMPTEUR DE NAVIGATIONS ---
+  if (message.action === "get_nav_count") {
+    sendResponse({ count: visitCounter });
+    return true;
+  }
+
+  // --- VERIFICATEUR DE RECHERCHES EFFECTIVES (Unique - retourne activityCount) ---
+  if (message.action === "verify_research_done") {
+    var externalActivityCount = 0;
+    if (message.startTime) {
+      var startTime = new Date(message.startTime).getTime();
+      for (var i = sessionData.length - 1; i >= 0; i--) {
+        var ev = sessionData[i];
+        if (ev.timestamp) {
+          var evTime = new Date(ev.timestamp).getTime();
+          // On ne compte que les activités survenues depuis le début de la question
+          if (evTime >= startTime) {
+            var isExternal = ev.url && 
+                             !ev.url.includes('/questionnaire/') && 
+                             !ev.url.startsWith('chrome-extension://') && 
+                             !ev.url.startsWith('chrome://') &&
+                             !ev.url.startsWith('about:');
+            // Clics, changements d'onglets ou navigations sur de vrais sites internet
+            if (isExternal && (ev.type === 'navigation' || ev.type === 'tab_activated' || ev.type === 'clic')) {
+              externalActivityCount++;
+            }
+          }
+        }
+      }
+    }
+    sendResponse({ activityCount: externalActivityCount });
+    return true;
+  }
+
+  // --- URGENCE MÉMOIRE ---
+  if (message.action === "allow_memory_emergency") {
+      var tabId = (sender.tab ? sender.tab.id : null) || message.tabId;
+      if (tabId) {
+          memoryEmergencyBypass[tabId] = true;
+      }
+      saveStateNow();
+      sendResponse({ success: true });
+      return true;
+  }
+
+  // --- RÉINITIALISATION DU BYPASS À CHAQUE QUESTION MÉMOIRE ---
+  if (message.action === "reset_memory_bypass") {
+      memoryEmergencyBypass = {};
+      saveStateNow();
+      sendResponse({ success: true });
+      return true;
+  }
+
+  if (message.action === "focus_questionnaire") {
+    if (questionnaireTabId) {
+      chrome.tabs.update(questionnaireTabId, { active: true });
+    }
+    sendResponse({ success: true });
+    return true;
+  }
+
 });

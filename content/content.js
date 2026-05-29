@@ -27,6 +27,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     currentVisitId = msg.visitId;
     maxScrollPercent = 0;
     timeSpentOnPageMs = 0;
+    keyPressCount = 0; // Ajouté
     lastFocusTime = Date.now();
 
     setTimeout(recalculateScroll, 50);

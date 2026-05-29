@@ -1,8 +1,10 @@
 // =========================================================
-// BLOCAGE DES SITES INTERDITS (IA)
+// HELPERS : BLOCAGES SITES IA ET TEST MÉMOIRE
 // =========================================================
 function isBlockedUrl(url) {
   if (!url) return false;
+  // Ne pas tenter de bloquer les protocoles système
+  if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('about:')) return false;
   try {
     var hostname = new URL(url).hostname.replace('www.', '');
     return BLOCKED_DOMAINS.some(function(domain) {
@@ -13,10 +15,18 @@ function isBlockedUrl(url) {
   }
 }
 
-function redirectToBlocked(tabId, blockedUrl) {
-  var blockedPage = chrome.runtime.getURL('blocked/blocked.html') +
-    '?url=' + encodeURIComponent(blockedUrl);
-  chrome.tabs.update(tabId, { url: blockedPage });
+function isQuestionnaireUrl(url) {
+  return url && url.includes('/questionnaire/');
+}
+
+function isMemoryBlockedPage(url) {
+  return url && url.includes('blocked_memory.html');
+}
+
+function redirectToBlocked(tabId, blockedUrl, type = 'ia') {
+  var page = type === 'ia' ? 'blocked/blocked.html' : 'blocked/blocked_memory.html';
+  var fullUrl = chrome.runtime.getURL(page) + '?url=' + encodeURIComponent(blockedUrl);
+  chrome.tabs.update(tabId, { url: fullUrl });
 }
 
 // =========================================================
@@ -38,17 +48,65 @@ function sendUrlChangedWithRetry(tabId, url, visitId) {
   setTimeout(trySend, 600);
 }
 
-// =========================================================
+function isSystemUrl(url) {
+  if (!url) return true;
+  return url.startsWith('chrome://') || 
+         url.startsWith('chrome-extension://') || 
+         url.startsWith('about:') || 
+         url.startsWith('edge://');
+}
+
+// CHANGEMENT D'ONGLET (onActivated)
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  if (!stateLoaded || !isTracking) return;
+
+  chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab.url) return;
+
+    // Bloquer si on est en phase mémoire, sur un site non autorisé, hors exceptions système
+    if (currentStudyPhase === 'memory' && 
+        !isQuestionnaireUrl(tab.url) && 
+        !isMemoryBlockedPage(tab.url) && 
+        !memoryEmergencyBypass[tab.id] && 
+        !tab.url.startsWith('chrome-extension://') &&
+        !tab.url.startsWith('chrome://') &&
+        !tab.url.startsWith('about:')) {
+      
+      redirectToBlocked(tab.id, tab.url, 'memory');
+      return;
+    }
+
+    // Enregistrer comme visite si ce n'est pas une page système
+    if (!tab.url.startsWith("chrome://") && 
+        !tab.url.startsWith("chrome-extension://") && 
+        !tab.url.startsWith("about:") &&
+        !isQuestionnaireUrl(tab.url)) {
+      
+      const visitId = `visit_${++visitCounter}`;
+      currentVisitByTab[tab.id] = visitId;
+      sessionData.push({
+        type: "tab_activated",
+        visitId: visitId,
+        url: tab.url,
+        tabId: tab.id,
+        timestamp: new Date().toISOString()
+      });
+      saveStateNow();
+      sendUrlChangedWithRetry(tab.id, tab.url, visitId);
+    }
+  });
+});
+
+
 // NAVIGATION : onUpdated
-// =========================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!stateLoaded || !isTracking || !changeInfo.url) return;
 
   const url = changeInfo.url;
 
-  // ── Vérification blocage ──
+  // Vérification blocage IA
   if (isBlockedUrl(url)) {
-    redirectToBlocked(tabId, url);
+    redirectToBlocked(tabId, url, 'ia');
     sessionData.push({
       type: "blocked_attempt",
       url: url,
@@ -56,33 +114,47 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       timestamp: new Date().toISOString(),
     });
     saveState();
-    return; // Ne pas enregistrer comme navigation normale
+    return;
   }
 
-  // ── Enregistrement de la navigation ──
+  // Vérification blocage TEST MÉMOIRE hors exceptions système
+  if (currentStudyPhase === 'memory' && 
+      !isQuestionnaireUrl(url) && 
+      !isMemoryBlockedPage(url) && 
+      !memoryEmergencyBypass[tabId] && 
+      !url.startsWith('chrome-extension://') &&
+      !url.startsWith('chrome://') &&
+      !url.startsWith('about:')) {
+    
+    redirectToBlocked(tabId, url, 'memory');
+    return;
+  }
 
-  const visitId = `visit_${++visitCounter}`;
-  currentVisitByTab[tabId] = visitId;
+  // Enregistrement de la navigation
+  if (!url.startsWith("chrome://") && !url.startsWith("chrome-extension://") && !url.startsWith("about:")) {
+    const visitId = `visit_${++visitCounter}`;
+    currentVisitByTab[tabId] = visitId;
 
-  const parentUrl =
-    tabHistory[tabId] ||
-    (tab.openerTabId ? tabHistory[tab.openerTabId] : null) ||
-    "Ouverture directe / Nouvel onglet";
+    const parentUrl =
+      tabHistory[tabId] ||
+      (tab.openerTabId ? tabHistory[tab.openerTabId] : null) ||
+      "Ouverture directe / Nouvel onglet";
 
-  sessionData.push({
-    type: "navigation",
-    visitId: visitId,
-    url: url,
-    parentUrl: parentUrl,
-    tabId: tabId,
-    timestamp: new Date().toISOString(),
-  });
+    sessionData.push({
+      type: "navigation",
+      visitId: visitId,
+      url: url,
+      parentUrl: parentUrl,
+      tabId: tabId,
+      timestamp: new Date().toISOString(),
+    });
 
-  tabHistory[tabId] = url;
-  saveStateNow();
-  sendUrlChangedWithRetry(tabId, url, visitId);
+    tabHistory[tabId] = url;
+    saveStateNow();
+    sendUrlChangedWithRetry(tabId, url, visitId);
+  }
 
-  if (url.includes("/questionnaire/")) {
+  if (isQuestionnaireUrl(url)) {
     questionnaireTabId = tabId;
     questionnaireUrl = url;
     chrome.storage.local.set({
@@ -92,9 +164,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// =========================================================
-// onCommitted — FILET DE SÉCURITÉ (back/forward, etc.)
-// =========================================================
+// onCommitted — FILET DE SÉCURITÉ
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (!stateLoaded || !isTracking || details.frameId !== 0) return;
 
@@ -108,9 +178,19 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   )
     return;
 
-    // ── Vérification blocage ──
   if (isBlockedUrl(url)) {
-    redirectToBlocked(tabId, url);
+    redirectToBlocked(tabId, url, 'ia');
+    return;
+  }
+
+  if (currentStudyPhase === 'memory' && 
+      !isQuestionnaireUrl(url) && 
+      !isMemoryBlockedPage(url) && 
+      !memoryEmergencyBypass[tabId] && 
+      !url.startsWith('chrome-extension://') &&
+      !url.startsWith('chrome://') &&
+      !url.startsWith('about:')) {
+    redirectToBlocked(tabId, url, 'memory');
     return;
   }
 
@@ -150,7 +230,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     sendUrlChangedWithRetry(tabId, url, visitId);
   }
 
-  if (url.includes("/questionnaire/")) {
+  if (isQuestionnaireUrl(url)) {
     questionnaireTabId = tabId;
     questionnaireUrl = url;
     chrome.storage.local.set({

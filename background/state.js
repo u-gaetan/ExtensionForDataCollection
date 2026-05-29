@@ -4,7 +4,6 @@ let isTracking = false;
 let visitCounter = 0;
 let currentVisitByTab = {};
 let stateLoaded = false;
-let currentSessionId = null;
 let autoSendInterval = null;
 let participantId = null;
 let saveTimer = null;
@@ -12,8 +11,10 @@ let authToken = null;
 let questionnaireTabId = null;
 let questionnaireUrl = null;
 let studyCompleted = false;
+let currentStudyPhase = "research"; // "research" ou "memory"
+let memoryEmergencyBypass = {}; // Stocke les onglets autorisés en urgence
 
-// Badge — défini ici car utilisé par loadState
+// Badge
 function updateBadge(tracking) {
   try {
     if (tracking) {
@@ -48,23 +49,25 @@ async function loadState() {
       "sw_tabHistory",
       "sw_currentVisitByTab",
       "sw_visitCounter",
-      "sw_sessionId",
       "authToken",
       "questionnaireTabId",
       "questionnaireUrl",
-      "studyCompleted"
+      "studyCompleted",
+      "currentStudyPhase", "memoryEmergencyBypass"
     ]);
     isTracking = res.isTracking || false;
     sessionData = res.sw_sessionData || [];
     tabHistory = res.sw_tabHistory || {};
     currentVisitByTab = res.sw_currentVisitByTab || {};
     visitCounter = res.sw_visitCounter || 0;
-    currentSessionId = res.sw_sessionId || null;
     authToken = res.authToken || null;
     questionnaireTabId = res.questionnaireTabId || null;
     questionnaireUrl = res.questionnaireUrl || null;
     studyCompleted = res.studyCompleted || false;
+    currentStudyPhase = res.currentStudyPhase || "research";
+    memoryEmergencyBypass = res.memoryEmergencyBypass || {};
     stateLoaded = true;
+    
     if (isTracking) startAutoSend();
     updateBadge(isTracking);
   } catch (e) {
@@ -89,9 +92,10 @@ function _doSave() {
     sw_tabHistory: tabHistory,
     sw_currentVisitByTab: currentVisitByTab,
     sw_visitCounter: visitCounter,
-    sw_sessionId: currentSessionId,
     questionnaireTabId: questionnaireTabId,
     questionnaireUrl: questionnaireUrl,
-    studyCompleted: studyCompleted
+    studyCompleted: studyCompleted,
+    currentStudyPhase: currentStudyPhase,
+    memoryEmergencyBypass: memoryEmergencyBypass
   });
 }

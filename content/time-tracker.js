@@ -21,6 +21,7 @@ function updateTimeAndSend() {
       url: window.location.href,
       maxScroll: Math.min(maxScrollPercent, 100),
       temps_passe_ms: timeSpentOnPageMs,
+      touches_clavier: keyPressCount, // Ajouté
       timestamp: new Date().toISOString(),
     })
     .catch(function () {});
@@ -51,8 +52,8 @@ window.addEventListener("pageshow", function (event) {
     alreadySentForThisPage = false;
     lastFocusTime = Date.now();
     timeSpentOnPageMs = 0;
-    maxScrollPercent = 0;
-    recalculateScroll();
+    maxScrollPercent = 0; 
+    keyPressCount = 0; 
 
     chrome.runtime.sendMessage({ action: "get_visit_id" }, function (response) {
       if (chrome.runtime.lastError) return;

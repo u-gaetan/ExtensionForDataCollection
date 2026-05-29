@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Accès bloqué - Test de mémoire</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #fef2f2; color: #1e293b; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(220, 38, 38, 0.15); max-width: 500px; text-align: center; border: 2px solid #fecaca; }
+    h1 { color: #dc2626; margin-top: 0; }
+    p { font-size: 16px; line-height: 1.5; color: #475569; margin-bottom: 25px; }
+    .btn { display: block; width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-bottom: 10px; text-decoration: none; }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-danger { background: transparent; color: #dc2626; border: 1px solid #dc2626; }
+    .btn-danger:hover { background: #fef2f2; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧠 Test de mémoire en cours</h1>
+    <p>La consultation d'autres pages Web est <strong>bloquée</strong> pendant la phase de mémorisation pour ne pas fausser les résultats de l'étude.</p>
+    <p>Veuillez retourner sur le questionnaire.</p>
+    
+    <button id="btnReturn" class="btn btn-primary">Retourner au questionnaire</button>
+    <button id="btnEmergency" class="btn btn-danger">C'est une urgence, y accéder quand même</button>
+  </div>
+  <script src="blocked_memory.js"></script>
+</body>
+</html>

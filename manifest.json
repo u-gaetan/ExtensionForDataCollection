@@ -40,7 +40,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["blocked/blocked.html", "uninstall/uninstall.html"],
+      "resources": ["blocked/blocked.html", "uninstall/uninstall.html", "blocked/blocked_memory.html"],
       "matches": ["<all_urls>"]
     }
   ],

@@ -45,6 +45,14 @@ document.addEventListener("copy", function (event) {
 });
 
 // =========================================================
+// SUIVI COMPTEUR TOUCHES CLAVIER
+// =========================================================
+document.addEventListener("keydown", function (event) {
+  if (!currentVisitId) return;
+  keyPressCount++;
+});
+
+// =========================================================
 // SUIVI DES COLLAGES (Ctrl+V / paste)
 // =========================================================
 document.addEventListener("paste", function (event) {

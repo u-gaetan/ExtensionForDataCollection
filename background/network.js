@@ -2,9 +2,7 @@
 // ENVOI VERS LE SERVEUR — INCRÉMENTAL
 // =========================================================
 async function sendToServer(isFinal = false) {
-  if (sessionData.length === 0 || !currentSessionId) {
-    return { success: false, error: "Pas de données ou pas de sessionId" };
-  }
+
 
   if (!participantId) await getOrCreateParticipantId();
 
@@ -38,7 +36,6 @@ async function sendToServer(isFinal = false) {
 
   const dataToSend = cleanedData.map(({ _synced, ...event }) => ({
     ...event,
-    sessionId: currentSessionId,
     participantId: participantId,
   }));
 
@@ -76,11 +73,28 @@ async function sendToServer(isFinal = false) {
 // =========================================================
 // ENVOI AUTOMATIQUE PÉRIODIQUE
 // =========================================================
+let trackingStartTime = null;
+
 function startAutoSend() {
   stopAutoSend();
+  trackingStartTime = Date.now(); // On note l'heure de départ de l'extension
+
   autoSendInterval = setInterval(() => {
-    if (isTracking && sessionData.length > 0) {
-      sendToServer(false);
+    if (isTracking) {
+      // SÉCURITÉ : Arrêt automatique si l'extension tourne depuis plus de 4h
+      if (Date.now() - trackingStartTime > 4 * 3600 * 1000) {
+        isTracking = false;
+        updateBadge(false);
+        chrome.storage.local.set({ isTracking: false });
+        saveStateNow();
+        sendToServer(true); // On envoie ce qui reste et on s'éteint
+        return;
+      }
+
+      // Comportement normal d'envoi périodique
+      if (sessionData.length > 0) {
+        sendToServer(false);
+      }
     }
   }, AUTO_SEND_INTERVAL_MS);
 }
