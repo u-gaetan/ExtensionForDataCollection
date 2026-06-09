@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Accès non autorisé / Unauthorized Access</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #1e1b4b, #0f172a);
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #e2e8f0;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 48px;
+      max-width: 520px;
+      text-align: center;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+    }
+    .icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 12px;
+      color: #f87171;
+    }
+    p {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #94a3b8;
+      margin-bottom: 16px;
+    }
+    .url-box {
+      background: #0f172a;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      color: #f59e0b;
+      word-break: break-all;
+      margin-bottom: 24px;
+    }
+    .info {
+      font-size: 13px;
+      color: #64748b;
+      border-top: 1px solid #334155;
+      padding-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🚫</div>
+    <h1 id="title">Site non autorisé pendant l'étude</h1>
+    <p id="desc">
+      L'utilisation d'outils d'intelligence artificielle générative
+      n'est pas permise pendant cette expérience de recherche.
+    </p>
+    <div class="url-box" id="blockedUrl"></div>
+    <p id="instruction">
+      Veuillez utiliser uniquement des moteurs de recherche classiques
+      (Google, Bing, etc.) et des sites web pour répondre aux questions.
+    </p>
+    <div class="info" id="footer">
+      Étude sur la navigation web — Université Laval
+    </div>
+  </div>
+  <script>
+    var params = new URLSearchParams(window.location.search);
+    document.getElementById('blockedUrl').textContent = params.get('url') || 'URL inconnue / Unknown URL';
+
+    const translations = {
+        fr: {
+            title: "Site non autorisé pendant l'étude",
+            desc: "L'utilisation d'outils d'intelligence artificielle générative n'est pas permise pendant cette expérience de recherche.",
+            instruction: "Veuillez utiliser uniquement des moteurs de recherche classiques (Google, Bing, etc.) et des sites web pour répondre aux questions.",
+            footer: "Étude sur la navigation web — Université Laval"
+        },
+        en: {
+            title: "Unauthorized Website During Study",
+            desc: "The use of generative artificial intelligence tools is not allowed during this research experiment.",
+            instruction: "Please use only traditional search engines (Google, Bing, etc.) and websites to answer the questions.",
+            footer: "Web Navigation Study — Université Laval"
+        }
+    };
+
+    chrome.storage.local.get(["currentLanguage"], function(res) {
+        const lang = res.currentLanguage || 'fr';
+        const txt = translations[lang];
+        document.getElementById('title').textContent = txt.title;
+        document.getElementById('desc').textContent = txt.desc;
+        document.getElementById('instruction').textContent = txt.instruction;
+        document.getElementById('footer').textContent = txt.footer;
+    });
+  </script>
+</body>
+</html>
