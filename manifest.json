@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "Étude Navigation Web — Université Laval",
   "version": "1.0",
-  "description": "Extension de recherche universitaire (Université Laval) permettant d'étudier les habitudes de navigation web dans le cadre d'une étude approuvée par le comité d'éthique CÉRUL. Les données collectées sont anonymisées et chiffrées.",
-  "permissions": ["activeTab", "storage", "tabs", "webNavigation", "management"],
-  "host_permissions": ["<all_urls>"],
+  "description": "Extension de recherche de l’Université Laval sur la navigation web. Données anonymisées et chiffrées. Étude approuvée par le CÉRUL.",
+  "permissions": ["activeTab", "storage", "tabs", "webNavigation"],
+  "host_permissions": ["https://*.azurewebsites.net/"],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

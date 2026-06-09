@@ -1,5 +1,12 @@
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
+  if (message.action === "set_token") {
+    authToken = message.token;
+    chrome.storage.local.set({ authToken: authToken });
+    sendResponse({ success: true });
+    return true;
+  }
+
   if (message.action === "get_data") {
     var cleanData = sessionData.map(function (e) {
       var copy = {};
@@ -9,6 +16,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     sendResponse({ data: cleanData });
     return true;
   }
+  
+  if (message.action === "set_language") {
+    currentLanguage = message.language;
+    chrome.storage.local.set({ currentLanguage: currentLanguage });
+    sendResponse({ success: true });
+    return true;
+  } 
 
   if (message.action === "clear_data") {
     sessionData = [];
@@ -18,6 +32,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     questionnaireTabId = null;
     questionnaireUrl = null;
     studyCompleted = false;
+    authToken = null;
     chrome.storage.local.set({ studyCompleted: false });
     saveStateNow();
     sendResponse({ success: true });

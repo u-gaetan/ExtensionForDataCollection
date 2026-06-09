@@ -3,12 +3,22 @@
 
   var hostEl = null;
 
-  function showBanner() {
-    if (hostEl) return;
+  const bannerI18n = {
+      fr: { label: "Collecte en cours", sub: "Étude Navigation Web — ULaval" },
+      en: { label: "Data collection active", sub: "Web Navigation Study — ULaval" }
+  };
+
+  function showBanner(lang) {
+    if (hostEl) {
+        // Si elle existe déjà, on la supprime pour la recréer avec la bonne langue
+        removeBanner();
+    }
     if (!document.body) {
-      setTimeout(showBanner, 100);
+      setTimeout(function() { showBanner(lang); }, 100);
       return;
     }
+
+    const txt = bannerI18n[lang || 'fr'];
 
     hostEl = document.createElement("div");
     hostEl.id = "ulaval-study-banner-host";
@@ -30,8 +40,8 @@
       '<div class="b">' +
       '<div class="d"></div>' +
       "<div>" +
-      '<div class="l">Collecte en cours</div>' +
-      '<div class="t">Étude Navigation Web — ULaval</div>' +
+      '<div class="l">' + txt.label + '</div>' +
+      '<div class="t">' + txt.sub + '</div>' +
       "</div>" +
       "</div>";
 
@@ -47,22 +57,22 @@
 
   // Vérifier l'état au chargement
   try {
-    chrome.storage.local.get(["isTracking"], function (result) {
+    chrome.storage.local.get(["isTracking", "currentLanguage"], function (result) {
       if (chrome.runtime.lastError) return;
-      if (result && result.isTracking) showBanner();
+      if (result && result.isTracking) showBanner(result.currentLanguage || 'fr');
     });
   } catch (e) {}
 
-  // Réagir aux changements en temps réel
+  // Réagir aux changements en temps réel (Bascule marche/arrêt et bascule de langue)
   try {
     chrome.storage.onChanged.addListener(function (changes) {
-      if (changes.isTracking) {
-        if (changes.isTracking.newValue) {
-          showBanner();
+      chrome.storage.local.get(["isTracking", "currentLanguage"], function (result) {
+        if (result && result.isTracking) {
+          showBanner(result.currentLanguage || 'fr');
         } else {
           removeBanner();
         }
-      }
+      });
     });
   } catch (e) {}
 })();

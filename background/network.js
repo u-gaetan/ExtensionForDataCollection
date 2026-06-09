@@ -1,9 +1,9 @@
 // =========================================================
 // ENVOI VERS LE SERVEUR — INCRÉMENTAL
 // =========================================================
+
+// background/network.js
 async function sendToServer(isFinal = false) {
-
-
   if (!participantId) await getOrCreateParticipantId();
 
   const unsyncedEvents = sessionData.filter((e) => !e._synced);
@@ -39,13 +39,20 @@ async function sendToServer(isFinal = false) {
     participantId: participantId,
   }));
 
+  // Préparation des en-têtes HTTP sécurisés
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  // Ajout du Jeton dynamique s'il est disponible
+  if (authToken) {
+    headers["Authorization"] = "Bearer " + authToken;
+  }
+
   try {
     const response = await fetch(SERVER_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": API_KEY                    // ← clé API restaurée
-      },
+      headers: headers,
       body: JSON.stringify(dataToSend),
     });
 
@@ -69,6 +76,7 @@ async function sendToServer(isFinal = false) {
     return { success: false, error: error.message };
   }
 }
+
 
 // =========================================================
 // ENVOI AUTOMATIQUE PÉRIODIQUE

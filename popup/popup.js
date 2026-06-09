@@ -7,14 +7,82 @@ var trackingIndicator = document.getElementById("trackingIndicator");
 var completedBox = document.getElementById("completedBox");
 var noteText = document.getElementById("noteText");
 
+// Dictionnaire i18n local à la popup
+const popupI18n = {
+    fr: {
+        title: "🔬 Étude Navigation Web",
+        subtitle: "Université Laval — Recherche CÉRUL",
+        badge: "ID : ",
+        indicator: "Collecte de données en cours",
+        completed: "Étude terminée — Merci pour votre participation !",
+        btn_back: "📋 Retour au questionnaire",
+        btn_start: "▶️ DÉMARRER L'ÉTUDE",
+        btn_stop: "⏹️ ARRÊTER L'ÉTUDE",
+        btn_uninstall: "🗑️ Désinstaller l'extension",
+        note: "Les données sont envoyées automatiquement toutes les 3 minutes et à la fin de la session.",
+        confirm_reset: "Des données existantes ont été trouvées. Voulez-vous les effacer et redémarrer l'étude ?",
+        status_waiting: "⏳ En attente de votre consentement...",
+        status_sending: "⏳ Envoi des données en cours...",
+        status_sent: "✅ Données envoyées ! Merci.",
+        status_failed: "⚠️ Envoi échoué",
+        status_no_url: "URL du questionnaire introuvable.",
+        alert_manual_uninstall: "Faites un clic droit sur l'icône de l'extension et cliquez sur 'Supprimer de Chrome'."
+    },
+    en: {
+        title: "🔬 Web Navigation Study",
+        subtitle: "Université Laval — CÉRUL Research",
+        badge: "ID: ",
+        indicator: "Data collection in progress",
+        completed: "Study completed — Thank you for your participation!",
+        btn_back: "📋 Back to questionnaire",
+        btn_start: "▶️ START THE STUDY",
+        btn_stop: "⏹️ STOP THE STUDY",
+        btn_uninstall: "🗑️ Uninstall extension",
+        note: "Data is automatically sent every 3 minutes and at the end of the session.",
+        confirm_reset: "Existing data has been found. Do you want to clear it and restart the study?",
+        status_waiting: "⏳ Waiting for your consent...",
+        status_sending: "⏳ Uploading data...",
+        status_sent: "✅ Data sent! Thank you.",
+        status_failed: "⚠️ Upload failed",
+        status_no_url: "Questionnaire URL not found.",
+        alert_manual_uninstall: "Right-click on the extension icon and select 'Remove from Chrome'."
+    }
+};
+
+let activeLang = 'fr'; // Défaut
+
+function applyTranslations(lang) {
+    activeLang = lang;
+    const txt = popupI18n[lang];
+    document.querySelector("h2").textContent = txt.title;
+    document.querySelector(".subtitle").textContent = txt.subtitle;
+    noteText.textContent = txt.note;
+    completedBox.querySelector(".msg").textContent = txt.completed;
+    trackingIndicator.innerHTML = '<span class="dot"></span> ' + txt.indicator;
+    uninstallBtn.textContent = txt.btn_uninstall;
+    questionnaireBtn.textContent = txt.btn_back;
+    
+    // Garder le texte dynamique du bouton de bascule à jour
+    chrome.storage.local.get(["isTracking"], function(res) {
+        if (res.isTracking) {
+            toggleBtn.textContent = txt.btn_stop;
+        } else {
+            toggleBtn.textContent = txt.btn_start;
+        }
+    });
+}
+
 // =========================================================
 // RESTAURER L'ÉTAT
 // =========================================================
 chrome.storage.local.get(
-  ["isTracking", "participantId", "studyCompleted"],
+  ["isTracking", "participantId", "studyCompleted", "currentLanguage"],
   function (result) {
+    const lang = result.currentLanguage || 'fr';
+    applyTranslations(lang);
+
     if (result.participantId) {
-      participantBadge.textContent = "ID : " + result.participantId;
+      participantBadge.textContent = popupI18n[lang].badge + result.participantId;
     }
 
     if (result.studyCompleted) {
@@ -29,6 +97,9 @@ chrome.storage.local.get(
 // RÉAGIR AUX CHANGEMENTS EN TEMPS RÉEL
 // =========================================================
 chrome.storage.onChanged.addListener(function (changes) {
+  if (changes.currentLanguage) {
+      applyTranslations(changes.currentLanguage.newValue);
+  }
   if (changes.studyCompleted && changes.studyCompleted.newValue === true) {
     showCompletedState();
   }
@@ -52,29 +123,22 @@ toggleBtn.addEventListener("click", function () {
   chrome.storage.local.get(
     ["isTracking", "studyCompleted"],
     function (result) {
-      
-      // VERROUILLAGE DÉFINITIF : Impossible de relancer l'étude
-      if (result.studyCompleted) {
-        return; 
-      }
+      if (result.studyCompleted) return;
 
       var newState = !(result.isTracking || false);
+      const txt = popupI18n[activeLang];
 
       if (newState === true) {
-        // ── DÉMARRAGE ──
         chrome.runtime.sendMessage({ action: "get_data" }, function (response) {
           var hasData = response && response.data && response.data.length > 0;
           if (hasData) {
-            if (!confirm("Des données existent. Effacer et redémarrer ?")) return;
+            if (!confirm(txt.confirm_reset)) return;
           }
 
           chrome.runtime.sendMessage({ action: "clear_data" }, function () {
             chrome.runtime.sendMessage({ action: "get_extension_ids" }, function (ids) {
               if (ids && ids.participantId) {
-                var questionnaireUrl =
-                  "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/" +
-                  "?pid=" + ids.participantId;
-
+                var questionnaireUrl = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/?pid=" + ids.participantId;
                 chrome.tabs.create({ url: questionnaireUrl }, function (tab) {
                   chrome.runtime.sendMessage({
                     action: "set_questionnaire_tab",
@@ -82,15 +146,14 @@ toggleBtn.addEventListener("click", function () {
                     url: questionnaireUrl,
                   });
                 });
-                showStatus("⏳ En attente de votre consentement...", "info");
+                showStatus(txt.status_waiting, "info");
               }
             });
           });
         });
       } else {
-        // ── ARRÊT MANUEL ──
         toggleBtn.disabled = true;
-        showStatus("⏳ Envoi des données en cours...", "info");
+        showStatus(txt.status_sending, "info");
 
         chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
           var sendStop = function () {
@@ -99,9 +162,9 @@ toggleBtn.addEventListener("click", function () {
                 updateUI(false);
                 toggleBtn.disabled = false;
                 if (result && result.success) {
-                  showStatus("✅ Données envoyées ! Merci.", "success");
+                  showStatus(txt.status_sent, "success");
                 } else {
-                  showStatus("⚠️ Envoi échoué. Données sauvegardées localement.", "error");
+                  showStatus(txt.status_failed, "error");
                 }
               });
             });
@@ -126,8 +189,9 @@ toggleBtn.addEventListener("click", function () {
 // =========================================================
 questionnaireBtn.addEventListener("click", function () {
   chrome.runtime.sendMessage({ action: "get_questionnaire_info" }, function (info) {
+    const txt = popupI18n[activeLang];
     if (!info || !info.url) {
-      showStatus("❌ URL du questionnaire introuvable.", "error");
+      showStatus(txt.status_no_url, "error");
       return;
     }
     if (info.tabId) {
@@ -150,8 +214,9 @@ questionnaireBtn.addEventListener("click", function () {
 // =========================================================
 uninstallBtn.addEventListener("click", function () {
   chrome.runtime.sendMessage({ action: "uninstall_self" }, function (response) {
+    const txt = popupI18n[activeLang];
     if (chrome.runtime.lastError || !response || !response.success) {
-      alert("Faites un clic droit sur l'icône de l'extension et cliquez sur 'Supprimer de Chrome'.");
+      alert(txt.alert_manual_uninstall);
     }
   });
 });
@@ -162,16 +227,17 @@ uninstallBtn.addEventListener("click", function () {
 function updateUI(isTracking) {
   completedBox.style.display = "none";
   uninstallBtn.style.display = "none";
+  const txt = popupI18n[activeLang];
 
   if (isTracking) {
-    toggleBtn.textContent = "⏹️ ARRÊTER L'ÉTUDE";
+    toggleBtn.textContent = txt.btn_stop;
     toggleBtn.style.backgroundColor = "#22c55e";
     toggleBtn.style.display = "block";
     questionnaireBtn.style.display = "block";
     trackingIndicator.style.display = "block";
     noteText.style.display = "block";
   } else {
-    toggleBtn.textContent = "▶️ DÉMARRER L'ÉTUDE";
+    toggleBtn.textContent = txt.btn_start;
     toggleBtn.style.backgroundColor = "#3b82f6";
     toggleBtn.style.display = "block";
     questionnaireBtn.style.display = "none";

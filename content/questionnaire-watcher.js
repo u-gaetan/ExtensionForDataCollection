@@ -1,7 +1,10 @@
+// content/questionnaire-watcher.js
 (function () {
   var href = window.location.href;
   if (href.indexOf("/questionnaire/") === -1) return;
 
+  // Configuration de l'origine de confiance de votre étude
+  var TRUSTED_ORIGIN = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net";
   var completionSent = false;
 
   function sendCompletion() {
@@ -20,10 +23,23 @@
 
   // ===== ÉCOUTER LES MESSAGES DE LA PAGE (app.js) =====
   window.addEventListener("message", function (event) {
-    if (event.source !== window || !event.data) return;
+    // SÉCURISATION : Rejeter tout message ne provenant pas de notre origine de confiance
+    if (event.origin !== TRUSTED_ORIGIN) return;
+    if (!event.data) return;
+
+    // --- Enregistrement du Token JWT reçu ---
+    if (event.data.type === "SET_TOKEN" && event.data.token) {
+      chrome.runtime.sendMessage({ action: "set_token", token: event.data.token }, function() {
+        if (chrome.runtime.lastError) { /* Ignorer */ }
+      });
+    }
+    // --- Enregistrement de la langue sélectionnée ---
+    else if (event.data.type === "SET_LANGUAGE") {
+      chrome.runtime.sendMessage({ action: "set_language", language: event.data.language });
+    }
 
     // --- Relais QUESTIONNAIRE_COMPLETED ---
-    if (event.data.type === "QUESTIONNAIRE_COMPLETED") {
+    else if (event.data.type === "QUESTIONNAIRE_COMPLETED") {
       sendCompletion();
     }
 
@@ -55,7 +71,7 @@
     else if (event.data.type === "VERIFY_RESEARCH") {
       chrome.runtime.sendMessage({ action: "verify_research_done", startTime: event.data.startTime }, function(response) {
         if (chrome.runtime.lastError) {
-          window.postMessage({ type: "RESEARCH_VERIFY_RESULT", activityCount: 1 }, "*"); // Fallback résilient
+          window.postMessage({ type: "RESEARCH_VERIFY_RESULT", activityCount: 1 }, "*");
           return;
         }
         window.postMessage({ type: "RESEARCH_VERIFY_RESULT", activityCount: response.activityCount }, "*");
