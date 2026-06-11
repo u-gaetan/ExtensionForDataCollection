@@ -21,6 +21,15 @@
     } catch (e) {}
   }
 
+  // ===== ÉCOUTER LES MESSAGES EN PROVENANCE DU BACKGROUND DE L'EXTENSION =====
+  chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+    if (message.action === "external_terminate") {
+      window.postMessage({ type: "EXTERNAL_TERMINATE", reason: message.reason }, window.location.origin);
+      sendResponse({ success: true });
+      return true;
+    }
+  });
+
   // ===== ÉCOUTER LES MESSAGES DE LA PAGE (app.js) =====
   window.addEventListener("message", function (event) {
     // SÉCURISATION : Rejeter tout message ne provenant pas de notre origine de confiance
@@ -75,6 +84,12 @@
           return;
         }
         window.postMessage({ type: "RESEARCH_VERIFY_RESULT", activityCount: response.activityCount }, "*");
+      });
+    }
+
+    else if (event.data.type === "STUDY_TERMINATED") {
+      chrome.runtime.sendMessage({ action: "study_terminated" }, function() {
+        if (chrome.runtime.lastError) { /* Ignorer */ }
       });
     }
 

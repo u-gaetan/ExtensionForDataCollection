@@ -1,4 +1,61 @@
+// ===== TIMERS DE FIN D'ÉTUDE (pilotés par le background) =====
+const TEST_MODE = true;
+const INACTIVITY_LIMIT_MIN = TEST_MODE ? 1 : 60;   // 1 h en prod
+const MAX_TIME_LIMIT_MIN   = TEST_MODE ? 2 : 240;  // 4 h en prod
+
+const ALARM_INACTIVITY = "study_inactivity";
+const ALARM_MAXTIME    = "study_maxtime";
+
+function startStudyTimers() {
+  studyStartTime = Date.now();
+  chrome.storage.local.set({ studyStartTime: studyStartTime });
+  // Durée totale (absolue → survit au sommeil du SW)
+  chrome.alarms.create(ALARM_MAXTIME, { when: studyStartTime + MAX_TIME_LIMIT_MIN * 60000 });
+  resetInactivityAlarm();
+}
+
+function resetInactivityAlarm() {
+  if (!isTracking || studyCompleted) return;
+  chrome.alarms.create(ALARM_INACTIVITY, { delayInMinutes: INACTIVITY_LIMIT_MIN });
+}
+
+function clearStudyTimers() {
+  chrome.alarms.clear(ALARM_INACTIVITY);
+  chrome.alarms.clear(ALARM_MAXTIME);
+}
+
+function finalizeStudy(reason) {
+  if (studyCompleted) return;            // anti double-déclenchement
+  studyCompleted = true;
+  isTracking = false;
+  stopAutoSend();
+  clearStudyTimers();
+  updateBadge(false);
+  chrome.storage.local.set({ isTracking: false, studyCompleted: true });
+  saveStateNow();
+
+  // Afficher l'écran de fin avec la bonne raison
+  if (questionnaireTabId) {
+    chrome.tabs.sendMessage(questionnaireTabId, {
+      action: "external_terminate",
+      reason: reason
+    }).catch(function () {});
+  }
+}
+
+chrome.alarms.onAlarm.addListener(function (alarm) {
+  if (alarm.name === ALARM_MAXTIME)        finalizeStudy("max_time");
+  else if (alarm.name === ALARM_INACTIVITY) finalizeStudy("inactivity");
+});
+
+// Réarme l'inactivité sur l'activité de N'IMPORTE QUEL onglet
+chrome.tabs.onActivated.addListener(function () { resetInactivityAlarm(); });
+chrome.tabs.onUpdated.addListener(function (id, info) { if (info.url) resetInactivityAlarm(); });
+
+
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+  if (isTracking && !studyCompleted) resetInactivityAlarm();
+
 
   if (message.action === "set_token") {
     authToken = message.token;
@@ -35,6 +92,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     authToken = null;
     chrome.storage.local.set({ studyCompleted: false });
     saveStateNow();
+    clearStudyTimers();
     sendResponse({ success: true });
     return true;
   }
@@ -54,6 +112,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     chrome.storage.local.set({ isTracking: true, studyCompleted: false });
     updateBadge(true);
     startAutoSend();
+    startStudyTimers();
 
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (tabs.length > 0) {
@@ -84,6 +143,26 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   }
 
+  // messages.js — À insérer dans le listener onMessage de messages.js
+
+  if (message.action === "study_terminated") {
+    studyCompleted = true;
+    isTracking = false;
+    stopAutoSend();
+    updateBadge(false);
+    clearStudyTimers();
+    chrome.storage.local.set({
+      isTracking: false,
+      studyCompleted: true
+    }, function() {
+      saveStateNow();
+      // Tentative d'envoi des dernières données accumulées
+      sendToServer(true).catch(function() {});
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
   if (message.action === "get_extension_ids") {
     (async function () {
       if (!participantId) await getOrCreateParticipantId();
@@ -99,12 +178,28 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (message.action === "stop_tracking") {
     stopAutoSend();
     isTracking = false;
+    studyCompleted = true; // Verrouille définitivement l'extension
     updateBadge(false);
-    chrome.storage.local.set({ isTracking: false });
-    saveStateNow();
+    
+    chrome.storage.local.set({ 
+      isTracking: false,
+      studyCompleted: true 
+    }, function() {
+      saveStateNow();
+
+      // Envoi du signal d'arrêt à l'onglet du questionnaire s'il est ouvert
+      if (questionnaireTabId) {
+        chrome.tabs.sendMessage(questionnaireTabId, { 
+          action: "external_terminate", 
+          reason: "stopped_by_user" 
+        }).catch(function() {});
+      }
+    });
+
     sendToServer(true).then(function (result) {
       sendResponse(result);
     });
+    clearStudyTimers();
     return true;
   }
 

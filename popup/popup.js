@@ -11,13 +11,13 @@ var noteText = document.getElementById("noteText");
 const popupI18n = {
     fr: {
         title: "🔬 Étude Navigation Web",
-        subtitle: "Université Laval — Recherche CÉRUL",
+        subtitle: "Université Laval — LEILAH",
         badge: "ID : ",
         indicator: "Collecte de données en cours",
         completed: "Étude terminée — Merci pour votre participation !",
         btn_back: "📋 Retour au questionnaire",
-        btn_start: "▶️ DÉMARRER L'ÉTUDE",
-        btn_stop: "⏹️ ARRÊTER L'ÉTUDE",
+        btn_start: "▶️ Lancer l'étude - Start the study",
+        btn_stop: "⏹️ Arrêter l'étude - Stop the study",
         btn_uninstall: "🗑️ Désinstaller l'extension",
         note: "Les données sont envoyées automatiquement toutes les 3 minutes et à la fin de la session.",
         confirm_reset: "Des données existantes ont été trouvées. Voulez-vous les effacer et redémarrer l'étude ?",
@@ -30,13 +30,13 @@ const popupI18n = {
     },
     en: {
         title: "🔬 Web Navigation Study",
-        subtitle: "Université Laval — CÉRUL Research",
+        subtitle: "Université Laval — LEILAH",
         badge: "ID: ",
         indicator: "Data collection in progress",
         completed: "Study completed — Thank you for your participation!",
         btn_back: "📋 Back to questionnaire",
-        btn_start: "▶️ START THE STUDY",
-        btn_stop: "⏹️ STOP THE STUDY",
+        btn_start: "▶️ Start The Study",
+        btn_stop: "⏹️ Stop The Study",
         btn_uninstall: "🗑️ Uninstall extension",
         note: "Data is automatically sent every 3 minutes and at the end of the session.",
         confirm_reset: "Existing data has been found. Do you want to clear it and restart the study?",
@@ -54,23 +54,23 @@ let activeLang = 'fr'; // Défaut
 function applyTranslations(lang) {
     activeLang = lang;
     const txt = popupI18n[lang];
-    document.querySelector("h2").textContent = txt.title;
-    document.querySelector(".subtitle").textContent = txt.subtitle;
-    noteText.textContent = txt.note;
-    completedBox.querySelector(".msg").textContent = txt.completed;
-    trackingIndicator.innerHTML = '<span class="dot"></span> ' + txt.indicator;
-    uninstallBtn.textContent = txt.btn_uninstall;
-    questionnaireBtn.textContent = txt.btn_back;
-    
-    // Garder le texte dynamique du bouton de bascule à jour
+
+    const h2 = document.querySelector("h2");
+    const sub = document.querySelector(".subtitle");
+    if (h2)  h2.textContent  = txt.title;
+    if (sub) sub.textContent = txt.subtitle;
+    if (noteText) noteText.textContent = txt.note;
+    if (completedBox) completedBox.querySelector(".msg").textContent = txt.completed;
+    if (trackingIndicator) trackingIndicator.innerHTML = '<span class="dot"></span> ' + txt.indicator;
+    if (uninstallBtn) uninstallBtn.textContent = txt.btn_uninstall;
+    if (questionnaireBtn) questionnaireBtn.textContent = txt.btn_back;
+
     chrome.storage.local.get(["isTracking"], function(res) {
-        if (res.isTracking) {
-            toggleBtn.textContent = txt.btn_stop;
-        } else {
-            toggleBtn.textContent = txt.btn_start;
-        }
+        if (toggleBtn) toggleBtn.textContent = res.isTracking ? txt.btn_stop : txt.btn_start;
     });
 }
+
+
 
 // =========================================================
 // RESTAURER L'ÉTAT
