@@ -1,7 +1,19 @@
+async function restoreState() {
+  const r = await chrome.storage.local.get(
+    ["participantId", "authToken", "isTracking", "currentLanguage"]
+  );
+  participantId   = r.participantId   || null;
+  authToken       = r.authToken       || null;
+  isTracking      = r.isTracking      || false;
+  currentLanguage = r.currentLanguage || "fr";
+}
+restoreState();
+chrome.runtime.onStartup.addListener(restoreState);
+
 // ===== TIMERS DE FIN D'ÉTUDE (pilotés par le background) =====
-const TEST_MODE = true;
-const INACTIVITY_LIMIT_MIN = TEST_MODE ? 1 : 60;   // 1 h en prod
-const MAX_TIME_LIMIT_MIN   = TEST_MODE ? 2 : 240;  // 4 h en prod
+
+const INACTIVITY_LIMIT_MIN = 60;   // 1 h 
+const MAX_TIME_LIMIT_MIN   = 240;  // 4 h 
 
 const ALARM_INACTIVITY = "study_inactivity";
 const ALARM_MAXTIME    = "study_maxtime";
@@ -9,7 +21,6 @@ const ALARM_MAXTIME    = "study_maxtime";
 function startStudyTimers() {
   studyStartTime = Date.now();
   chrome.storage.local.set({ studyStartTime: studyStartTime });
-  // Durée totale (absolue → survit au sommeil du SW)
   chrome.alarms.create(ALARM_MAXTIME, { when: studyStartTime + MAX_TIME_LIMIT_MIN * 60000 });
   resetInactivityAlarm();
 }
@@ -25,30 +36,42 @@ function clearStudyTimers() {
 }
 
 function finalizeStudy(reason) {
-  if (studyCompleted) return;            // anti double-déclenchement
+  if (studyCompleted) return;            
   studyCompleted = true;
   isTracking = false;
+  terminationReason = reason;
   stopAutoSend();
   clearStudyTimers();
   updateBadge(false);
-  chrome.storage.local.set({ isTracking: false, studyCompleted: true });
-  saveStateNow();
 
-  // Afficher l'écran de fin avec la bonne raison
-  if (questionnaireTabId) {
-    chrome.tabs.sendMessage(questionnaireTabId, {
-      action: "external_terminate",
-      reason: reason
-    }).catch(function () {});
-  }
+  chrome.storage.local.set({ 
+    isTracking: false, 
+    studyCompleted: true, 
+    terminationReason: reason 
+  }, function () {
+    saveStateNow();
+
+    sendToServer(true).catch(function() {});
+
+    if (questionnaireTabId) {
+      chrome.tabs.sendMessage(questionnaireTabId, {
+        action: "external_terminate",
+        reason: reason
+      }).catch(function () {});
+    }
+  });
 }
 
 chrome.alarms.onAlarm.addListener(function (alarm) {
   if (alarm.name === ALARM_MAXTIME)        finalizeStudy("max_time");
   else if (alarm.name === ALARM_INACTIVITY) finalizeStudy("inactivity");
+  else if (alarm.name === ALARM_AUTOSEND) {
+    if (isTracking && sessionData.length > 0) {
+      sendToServer(false).catch(function() {});
+    }
+  }
 });
 
-// Réarme l'inactivité sur l'activité de N'IMPORTE QUEL onglet
 chrome.tabs.onActivated.addListener(function () { resetInactivityAlarm(); });
 chrome.tabs.onUpdated.addListener(function (id, info) { if (info.url) resetInactivityAlarm(); });
 
@@ -56,6 +79,22 @@ chrome.tabs.onUpdated.addListener(function (id, info) { if (info.url) resetInact
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (isTracking && !studyCompleted) resetInactivityAlarm();
 
+  if (message.action === "import_session") {
+    participantId = message.participantId;
+    authToken = message.token;
+    if (message.language) {
+      currentLanguage = message.language;
+    }
+    chrome.storage.local.set({ 
+      participantId: participantId, 
+      authToken: authToken,
+      currentLanguage: currentLanguage
+    }, function() {
+      saveStateNow();
+    });
+    sendResponse({ success: true });
+    return true;
+  }
 
   if (message.action === "set_token") {
     authToken = message.token;
@@ -81,6 +120,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   } 
 
+  // CORRECTION : Attendre la fin du vidage asynchrone avant de retourner la réponse
   if (message.action === "clear_data") {
     sessionData = [];
     tabHistory = {};
@@ -89,18 +129,20 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     questionnaireTabId = null;
     questionnaireUrl = null;
     studyCompleted = false;
-    authToken = null;
-    chrome.storage.local.set({ studyCompleted: false });
-    saveStateNow();
-    clearStudyTimers();
-    sendResponse({ success: true });
-    return true;
-  }
+    participantId = null; 
+    authToken = null;     
+    terminationReason = "unknown";
 
-  if (message.action === "get_visit_id") {
-    var tabId = sender.tab ? sender.tab.id : null;
-    sendResponse({
-      visitId: tabId ? currentVisitByTab[tabId] || null : null
+    chrome.storage.local.clear(function() {
+      chrome.storage.local.set({ 
+        isTracking: false,
+        studyCompleted: false,
+        terminationReason: "unknown"
+      }, function() {
+        saveStateNow();
+        clearStudyTimers();
+        sendResponse({ success: true });
+      });
     });
     return true;
   }
@@ -108,57 +150,99 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (message.action === "start_tracking") {
     isTracking = true;
     studyCompleted = false;
+    terminationReason = "unknown";
 
-    chrome.storage.local.set({ isTracking: true, studyCompleted: false });
+    chrome.storage.local.set({ isTracking: true, studyCompleted: false, terminationReason: "unknown" });
     updateBadge(true);
     startAutoSend();
     startStudyTimers();
 
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    chrome.tabs.query({ url: "*://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/*" }, function (tabs) {
+      let targetTab = null;
       if (tabs.length > 0) {
-        var tab = tabs[0];
-        var currentUrl = tab.url || "URL Inconnue";
-        var vid = "visit_" + (++visitCounter);
-        currentVisitByTab[tab.id] = vid;
-
-        sessionData.push({
-          type: "navigation",
-          visitId: vid,
-          url: currentUrl,
-          parentUrl: "Demarrage de l'experience",
-          tabId: tab.id,
-          timestamp: new Date().toISOString()
-        });
-
-        tabHistory[tab.id] = currentUrl;
-        saveStateNow();
-        chrome.tabs.sendMessage(tab.id, {
-          action: "url_changed",
-          newUrl: currentUrl,
-          visitId: vid
-        }).catch(function () {});
+        targetTab = tabs[0];
+      } else if (questionnaireTabId) {
+        targetTab = { id: questionnaireTabId };
       }
-      sendResponse({ success: true });
+
+      if (targetTab && targetTab.id) {
+        chrome.tabs.update(targetTab.id, { active: true });
+        if (targetTab.windowId) {
+          chrome.windows.update(targetTab.windowId, { focused: true });
+        }
+        
+        setTimeout(function() {
+          chrome.tabs.sendMessage(targetTab.id, {
+            action: "external_start_tracking"
+          }).catch(function() {});
+        }, 300);
+
+        chrome.tabs.get(targetTab.id, function(t) {
+          if (t && t.url) {
+            var vid = "visit_" + (++visitCounter);
+            currentVisitByTab[t.id] = vid;
+            sessionData.push({
+              type: "navigation",
+              visitId: vid,
+              url: t.url,
+              parentUrl: "Demarrage de l'experience",
+              tabId: t.id,
+              timestamp: new Date().toISOString()
+            });
+            tabHistory[t.id] = t.url;
+            saveStateNow();
+          }
+        });
+      } else {
+        var questionnaireUrl = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/installation?pid=" + participantId;
+        chrome.tabs.create({ url: questionnaireUrl, active: true }, function(newTab) {
+          questionnaireTabId = newTab.id;
+          chrome.storage.local.set({
+            questionnaireTabId: newTab.id,
+            questionnaireUrl: questionnaireUrl
+          });
+          saveStateNow();
+        });
+      }
     });
+
+    sendResponse({ success: true });
     return true;
   }
 
-  // messages.js — À insérer dans le listener onMessage de messages.js
-
   if (message.action === "study_terminated") {
+    if (studyCompleted) {
+        sendResponse({ success: true });
+        return true;
+    }
+
     studyCompleted = true;
     isTracking = false;
+    // Mapping des raisons app.js -> clés reconnues par popup.js
+    var raw = message.reason || "withdrawn";
+    var map = {
+        post_consent_refused: "withdrawn",   // retrait post-expérimental
+        consent_refused:      "withdrawn",
+        inactivity:           "inactivity",
+        max_time:             "max_time",
+        stopped_by_user:      "stopped_by_user"
+    };
+    terminationReason = map[raw] || "withdrawn";
+
     stopAutoSend();
     updateBadge(false);
     clearStudyTimers();
     chrome.storage.local.set({
       isTracking: false,
-      studyCompleted: true
+      studyCompleted: true,
+      terminationReason: "withdrawn"
     }, function() {
       saveStateNow();
-      // Tentative d'envoi des dernières données accumulées
-      sendToServer(true).catch(function() {});
-      sendResponse({ success: true });
+      sendToServer(true).then(function() {
+        sendResponse({ success: true });
+      }).catch(function() {
+        sendResponse({ success: true });
+      });
     });
     return true;
   }
@@ -178,33 +262,36 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   if (message.action === "stop_tracking") {
     stopAutoSend();
     isTracking = false;
-    studyCompleted = true; // Verrouille définitivement l'extension
+    studyCompleted = true; 
+    terminationReason = "stopped_by_user";
     updateBadge(false);
+    clearStudyTimers();
     
     chrome.storage.local.set({ 
       isTracking: false,
-      studyCompleted: true 
+      studyCompleted: true,
+      terminationReason: "stopped_by_user"
     }, function() {
       saveStateNow();
 
-      // Envoi du signal d'arrêt à l'onglet du questionnaire s'il est ouvert
       if (questionnaireTabId) {
         chrome.tabs.sendMessage(questionnaireTabId, { 
           action: "external_terminate", 
           reason: "stopped_by_user" 
         }).catch(function() {});
       }
-    });
 
-    sendToServer(true).then(function (result) {
-      sendResponse(result);
+      sendToServer(true).then(function (result) {
+        sendResponse(result);
+      }).catch(function(err) {
+        sendResponse({ success: false, error: err.message });
+      });
     });
-    clearStudyTimers();
     return true;
   }
 
   if (message.action === "send_to_server") {
-    sendToServer(true).then(function (result) {
+    sendToServer(false).then(function (result) {
       sendResponse(result);
     });
     return true;
@@ -222,9 +309,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   }
 
   if (message.action === "get_questionnaire_info") {
+    let url = questionnaireUrl;
+    if (!url && participantId) {
+      url = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/installation?pid=" + participantId;
+    }
     sendResponse({
       tabId: questionnaireTabId,
-      url: questionnaireUrl
+      url: url
     });
     return true;
   }
@@ -237,19 +328,23 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
     studyCompleted = true;
     isTracking = false;
+    terminationReason = "completed";
     stopAutoSend();
     updateBadge(false);
+    clearStudyTimers();
 
     chrome.storage.local.set({
       isTracking: false,
-      studyCompleted: true
+      studyCompleted: true,
+      terminationReason: "completed"
+    }, function() {
+      saveStateNow();
+      sendToServer(true).then(function() {
+        sendResponse({ success: true });
+      }).catch(function() {
+        sendResponse({ success: true });
+      });
     });
-    saveStateNow();
-
-    // Envoyer les données en arrière-plan (le participant n'attend pas)
-    sendToServer(true);
-
-    sendResponse({ success: true });
     return true;
   }
 
@@ -298,24 +393,21 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     saveState();
   }
 
-  // --- GESTION DES PHASES (Unique) ---
   if (message.action === "set_phase") {
     currentStudyPhase = message.phase;
     if (message.phase === "research") {
-      memoryEmergencyBypass = {}; // Réinitialisation des urgences quand on revient en recherche
+      memoryEmergencyBypass = {}; 
     }
     saveStateNow();
     sendResponse({ success: true });
     return true;
   }
 
-  // --- COMPTEUR DE NAVIGATIONS ---
   if (message.action === "get_nav_count") {
     sendResponse({ count: visitCounter });
     return true;
   }
 
-  // --- VERIFICATEUR DE RECHERCHES EFFECTIVES (Unique - retourne activityCount) ---
   if (message.action === "verify_research_done") {
     var externalActivityCount = 0;
     if (message.startTime) {
@@ -324,14 +416,12 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         var ev = sessionData[i];
         if (ev.timestamp) {
           var evTime = new Date(ev.timestamp).getTime();
-          // On ne compte que les activités survenues depuis le début de la question
           if (evTime >= startTime) {
             var isExternal = ev.url && 
                              !ev.url.includes('/questionnaire/') && 
                              !ev.url.startsWith('chrome-extension://') && 
                              !ev.url.startsWith('chrome://') &&
                              !ev.url.startsWith('about:');
-            // Clics, changements d'onglets ou navigations sur de vrais sites internet
             if (isExternal && (ev.type === 'navigation' || ev.type === 'tab_activated' || ev.type === 'clic')) {
               externalActivityCount++;
             }
@@ -343,7 +433,6 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   }
 
-  // --- URGENCE MÉMOIRE ---
   if (message.action === "allow_memory_emergency") {
       var tabId = (sender.tab ? sender.tab.id : null) || message.tabId;
       if (tabId) {
@@ -354,7 +443,6 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       return true;
   }
 
-  // --- RÉINITIALISATION DU BYPASS À CHAQUE QUESTION MÉMOIRE ---
   if (message.action === "reset_memory_bypass") {
       memoryEmergencyBypass = {};
       saveStateNow();
@@ -370,4 +458,19 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   }
 
+  // ADDITION : Gestion de la demande d'identifiant de visite pour content.js
+  if (message.action === "get_visit_id") {
+    var tabId = sender.tab ? sender.tab.id : null;
+    var vid = tabId ? currentVisitByTab[tabId] : null;
+
+    // Si le suivi est actif mais qu'aucune visite n'est associée, génération à chaud
+    if (!vid && tabId && isTracking) {
+      vid = "visit_" + (++visitCounter);
+      currentVisitByTab[tabId] = vid;
+      saveStateNow();
+    }
+
+    sendResponse({ visitId: vid });
+    return true;
+  }
 });

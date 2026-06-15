@@ -3,7 +3,7 @@
   "name": "Étude Navigation Web — Université Laval",
   "version": "1.0",
   "description": "Extension de recherche de l’Université Laval sur la navigation web. Données anonymisées et chiffrées. Étude approuvée par le CÉRUL.",
-  "permissions": ["activeTab", "storage", "tabs", "webNavigation","alarms"],
+  "permissions": ["activeTab", "storage", "tabs", "webNavigation", "alarms"],
   "host_permissions": ["https://*.azurewebsites.net/"],
   "icons": {
     "16": "icons/icon16.png",
@@ -13,7 +13,6 @@
   "background": {
     "service_worker": "background/background.js"
   },
-  
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -23,8 +22,13 @@
         "content/time-tracker.js",
         "content/interaction-tracker.js",
         "content/content.js",
-        "content/study-banner.js",
-      "content/questionnaire-watcher.js"
+        "content/study-banner.js"
+      ]
+    },
+    {
+      "matches": ["https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/*"],
+      "js": [
+        "content/questionnaire-watcher.js"
       ]
     },
     {
