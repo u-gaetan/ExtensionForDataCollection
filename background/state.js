@@ -11,10 +11,10 @@ let authToken = null;
 let questionnaireTabId = null;
 let questionnaireUrl = null;
 let studyCompleted = false;
-let currentStudyPhase = "research"; // "research" ou "memory"
-let memoryEmergencyBypass = {}; // Stocke les onglets autorisés en urgence
+let currentStudyPhase = "research"; // "research" or "memory"
+let memoryEmergencyBypass = {}; //stockage for emergency bypasses of the memory phase, keyed by visitId
 let terminationReason = "unknown";
-let currentLanguage = "fr"; // Langue de l'étude par défaut
+let currentLanguage = "fr"; // study language, can be "fr" or "en", fr is by default
 
 // Badge
 function updateBadge(tracking) {
@@ -26,7 +26,7 @@ function updateBadge(tracking) {
       chrome.action.setBadgeText({ text: "" });
     }
   } catch (e) {
-    // Ignorer si chrome.action n'est pas disponible
+    console.error("Error while updating the badge:", e);
   }
 }
 

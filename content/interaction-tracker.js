@@ -1,9 +1,9 @@
 // =========================================================
-// OUTILS DE PROTECTION DE LA VIE PRIVÉE (RGPD)
+// protection of sensitive data (passwords, credit cards, etc.)
 // =========================================================
 
 /**
- * Détermine si un élément HTML est considéré comme sensible (ex: champ de mot de passe, carte de crédit, etc.)
+ * detects if an element is likely to contain sensitive data (passwords, credit cards, etc.)
  */
 function isSensitiveElement(element) {
   // SÉCURITÉ : Retourner false si l'élément ou son tagName n'existe pas
@@ -15,10 +15,10 @@ function isSensitiveElement(element) {
   const id = (element.getAttribute("id") || "").toLowerCase();
   const autocomplete = (element.getAttribute("autocomplete") || "").toLowerCase();
 
-  // Ne jamais capturer ce qui provient d'un champ de type mot de passe
+  // never track password fields
   if (type === "password") return true;
 
-  // Liste de mots clés suspects dans les attributs HTML
+  // list of sensitive input types
   const sensitiveKeywords = /password|passwd|pass|card|cvv|cc|cardnumber|ssn|socialsecurity|token|secret|billing|bank/i;
   
   if (sensitiveKeywords.test(name) || sensitiveKeywords.test(id) || sensitiveKeywords.test(autocomplete)) {
@@ -29,7 +29,7 @@ function isSensitiveElement(element) {
 }
 
 /**
- * Nettoie le texte en censurant les motifs sensibles comme les numéros de cartes de crédit
+ * cleans sensitive text by removing potential credit card numbers and other sensitive patterns
  */
 function cleanSensitiveText(text) {
   if (!text) return "";
@@ -42,7 +42,7 @@ function cleanSensitiveText(text) {
 
 
 // =========================================================
-// SUIVI DES CLICS
+// click tracking
 // =========================================================
 document.addEventListener("mousedown", function (event) {
   if (!currentVisitId) return;
@@ -59,12 +59,12 @@ document.addEventListener("mousedown", function (event) {
 });
 
 // =========================================================
-// SUIVI DES COPIES
+// copy tracking
 // =========================================================
 document.addEventListener("copy", function (event) {
   if (!currentVisitId) return;
 
-  // Sécurité : Ignorer la copie si elle provient d'un élément sensible
+  // security: do not track copy if the target element is sensitive
   if (isSensitiveElement(event.target)) {
     return;
   }
@@ -82,7 +82,7 @@ document.addEventListener("copy", function (event) {
   }
 
   if (txt && txt.trim().length > 0) {
-    // Filtrage et nettoyage
+    // security: filter and clean sensitive text
     const cleanText = cleanSensitiveText(txt);
 
     chrome.runtime
@@ -98,7 +98,7 @@ document.addEventListener("copy", function (event) {
 });
 
 // =========================================================
-// SUIVI COMPTEUR TOUCHES CLAVIER
+// keyboard touch count tracking
 // =========================================================
 document.addEventListener("keydown", function (event) {
   if (!currentVisitId) return;
@@ -106,12 +106,12 @@ document.addEventListener("keydown", function (event) {
 });
 
 // =========================================================
-// SUIVI DES COLLAGES (Ctrl+V / paste)
+// paste tracking
 // =========================================================
 document.addEventListener("paste", function (event) {
   if (!currentVisitId) return;
 
-  // Sécurité : Ne pas suivre le collage si le champ de destination est sensible
+  // security: do not track paste if the target element is sensitive
   if (isSensitiveElement(event.target)) {
     return;
   }
@@ -127,7 +127,7 @@ document.addEventListener("paste", function (event) {
   }
 
   if (txt && txt.trim().length > 0) {
-    // Filtrage et nettoyage
+    // security: filter and clean sensitive text
     const cleanText = cleanSensitiveText(txt);
 
     chrome.runtime

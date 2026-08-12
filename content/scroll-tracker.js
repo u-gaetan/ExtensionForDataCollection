@@ -1,5 +1,5 @@
 // =========================================================
-// SUIVI DU SCROLL 
+// scroll tracking
 // =========================================================
 function getDocHeight() {
   return Math.max(
@@ -15,7 +15,7 @@ function recalculateScroll() {
   var docHeight = getDocHeight();
   var viewportHeight = window.innerHeight;
 
-  // Page entièrement visible sans scrollbar → 100%
+  // page entirely visible without scrolling ( = 100% scrolled)
   if (docHeight <= viewportHeight + 2) {
     maxScrollPercent = 100;
     return;
@@ -26,10 +26,10 @@ function recalculateScroll() {
   if (pct > maxScrollPercent) maxScrollPercent = pct;
 }
 
-// Écouter le scroll sur window (plus fiable que document)
+// listen to scroll events
 window.addEventListener("scroll", recalculateScroll, { passive: true });
 
-// Observer les changements de taille (lazy loading, images chargées...)
+// observe changes in the document size (e.g., dynamic content)
 if (typeof ResizeObserver !== "undefined") {
   var resizeObs = new ResizeObserver(function () {
     recalculateScroll();
@@ -38,10 +38,10 @@ if (typeof ResizeObserver !== "undefined") {
   if (document.body) resizeObs.observe(document.body);
 }
 
-// Recalcul périodique (contenu injecté dynamiquement)
+// periodically recalculate scroll percentage in case of dynamic content changes
 setInterval(recalculateScroll, 2000);
 
-// Recalcul après chargement complet (images, fonts, iframes)
+// recalculate scroll percentage on page load after a short delay to ensure accurate measurement
 window.addEventListener("load", function () {
   setTimeout(recalculateScroll, 100);
   setTimeout(recalculateScroll, 500);

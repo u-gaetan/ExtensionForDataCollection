@@ -1,5 +1,5 @@
 // =========================================================
-// CONFIGURATION DE LA SÉCURITÉ ET CRYPTOGRAPHIE (Web Crypto API)
+// security configuration: encryption algorithm and public key for the researcher
 // =========================================================
 
 const RESEARCHER_PUBLIC_KEY_B64 = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlvkU7mXiKeDLmG+gN8yypXdqIlqp51SdcNxMDwfcfzagPisG2DIkShqR8ShXD5pxJD8CDWOAdE3tFosgFCjrxJ0nU5LHxrgOpPINcoi7w3rs/4X0SZxvEOJEUdjplSxJyKLMSLekOeWgLA7uI6baNvkykVcajnbTcdH2eWN7r8gGtmPF2XEM4Q74BUW06oH3jm8odS2yWhBn/VL78qySTdauILLLp+xNm0WWSglFEooNyqNtX3ibHpc1k9CzJvBNpTJ/541Dv2dl4OMbKjpRRQ77ScQ2gR6vh5JhF3R9L8Zk5zqvDUqR0W93dxA1pgPjRLd2R5OIAqKmkZXaw1v/SQIDAQAB"; 
@@ -69,7 +69,7 @@ async function encryptFieldHybrid(plaintext, cryptoPublicKey) {
 }
 
 // =========================================================
-// ENVOI VERS LE SERVEUR — AVEC ENCRYPTAGE SÉCURISÉ
+// sending data to the server with encryption
 // =========================================================
 
 async function sendToServer(isFinal = false) {
@@ -191,7 +191,7 @@ async function sendToServer(isFinal = false) {
 }
 
 // =========================================================
-// ENVOI AUTOMATIQUE PÉRIODIQUE (Gestion par alarmes récurrentes MV3)
+// automatic sending of data to the server every 3 minutes
 // =========================================================
 const ALARM_AUTOSEND = "study_autosend";
 

@@ -10,7 +10,7 @@
   };
 
   function showBanner(lang) {
-    // Si la bannière est déjà présente et rattachée, on ne la recrée pas
+    // if banner already exists and is in the document, do nothing
     if (hostEl && document.body && document.body.contains(hostEl)) {
         return;
     }
@@ -27,7 +27,7 @@
     hostEl = document.createElement("div");
     hostEl.id = "ulaval-study-banner-host";
     
-    // Positionnement du conteneur parent
+    // positioning and styling of the host element
     hostEl.style.position = "fixed";
     hostEl.style.bottom = "16px";
     hostEl.style.right = "16px";
@@ -35,7 +35,7 @@
 
     var shadow = hostEl.attachShadow({ mode: "closed" });
 
-    // Création et stylisation du bloc principal
+    // creation and styling of the main banner block
     var mainBlock = document.createElement("div");
     mainBlock.style.display = "flex";
     mainBlock.style.alignItems = "center";
@@ -50,7 +50,7 @@
     mainBlock.style.boxShadow = "0 4px 20px rgba(0,0,0,0.4)";
     mainBlock.style.userSelect = "none";
 
-    // Création et stylisation du voyant rouge
+    // creation and styling of the pulsating dot
     var dot = document.createElement("div");
     dot.style.width = "8px";
     dot.style.height = "8px";
@@ -58,7 +58,7 @@
     dot.style.borderRadius = "50%";
     dot.style.flexShrink = "0";
 
-    // Animation de pulsation programmatique (Web Animations API) pour contourner la CSP
+    // animation for the pulsating effect
     dot.animate([
       { opacity: 1 },
       { opacity: 0.3 },
@@ -69,7 +69,7 @@
       easing: 'ease-in-out'
     });
 
-    // Bloc texte
+    // text bloc
     var textContainer = document.createElement("div");
 
     var title = document.createElement("div");
@@ -92,7 +92,7 @@
     shadow.appendChild(mainBlock);
     document.body.appendChild(hostEl);
 
-    // Démarrer la surveillance pour éviter les suppressions par les frameworks JS
+    // start observing to prevent removal by JS frameworks
     startObserving(lang);
   }
 
@@ -121,7 +121,7 @@
     }
   }
 
-  // Vérifier l'état au chargement
+  // Verify if the study is active and show the banner accordingly
   try {
     chrome.storage.local.get(["isTracking", "currentLanguage"], function (result) {
       if (chrome.runtime.lastError) return;
@@ -129,7 +129,7 @@
     });
   } catch (e) {}
 
-  // Réagir aux changements en temps réel
+  // react to changes in tracking state and show/hide the banner accordingly
   try {
     chrome.storage.onChanged.addListener(function (changes) {
       chrome.storage.local.get(["isTracking", "currentLanguage"], function (result) {

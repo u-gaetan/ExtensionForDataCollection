@@ -1,5 +1,5 @@
 // =========================================================
-// VARIABLES PARTAGÉES — CONTENT SCRIPTS
+// shared state variables - content script
 // =========================================================
 let currentVisitId = null;
 let maxScrollPercent = 0;

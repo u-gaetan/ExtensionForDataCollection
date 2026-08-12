@@ -4,7 +4,7 @@
   "version": "1.0",
   "description": "Extension de recherche de l’Université Laval sur la navigation web. Données anonymisées et chiffrées. Étude approuvée par le CÉRUL.",
   "permissions": ["activeTab", "storage", "tabs", "webNavigation", "alarms"],
-  "host_permissions": ["https://*.azurewebsites.net/"],
+  "host_permissions": ["https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/"],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -45,7 +45,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["blocked/blocked.html", "uninstall/uninstall.html", "blocked/blocked_memory.html"],
+      "resources": ["blocked/blocked.html", "blocked/blocked_memory.html"],
       "matches": ["<all_urls>"]
     }
   ],

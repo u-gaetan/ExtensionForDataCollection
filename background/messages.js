@@ -10,7 +10,7 @@ async function restoreState() {
 restoreState();
 chrome.runtime.onStartup.addListener(restoreState);
 
-// ===== TIMERS DE FIN D'ÉTUDE (pilotés par le background) =====
+// ===== TIMERS END OF STUDY =====
 
 const INACTIVITY_LIMIT_MIN = 60;   // 1 h 
 const MAX_TIME_LIMIT_MIN   = 240;  // 4 h 
@@ -218,7 +218,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
     studyCompleted = true;
     isTracking = false;
-    // Mapping des raisons app.js -> clés reconnues par popup.js
+    // reason of study termination can be "withdrawn", "inactivity", "max_time", "stopped_by_user"
     var raw = message.reason || "withdrawn";
     var map = {
         post_consent_refused: "withdrawn",   // retrait post-expérimental
@@ -458,12 +458,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   }
 
-  // ADDITION : Gestion de la demande d'identifiant de visite pour content.js
+  // visit id demand for content.js
   if (message.action === "get_visit_id") {
     var tabId = sender.tab ? sender.tab.id : null;
     var vid = tabId ? currentVisitByTab[tabId] : null;
 
-    // Si le suivi est actif mais qu'aucune visite n'est associée, génération à chaud
     if (!vid && tabId && isTracking) {
       vid = "visit_" + (++visitCounter);
       currentVisitByTab[tabId] = vid;

@@ -19,7 +19,7 @@
           if (callback) callback(response);
         });
       } catch (e) {
-        // Ignorer l'exception d'invalidation
+        console.error("Error sending message to background:", e);
       }
     }
   }
@@ -63,7 +63,7 @@
       window.postMessage({ type: "PONG_EXTENSION" }, window.location.origin);
     }
 
-    // Inclusion et transfert du paramètre de langue
+    // inclusion and transfer of session data from the questionnaire to the extension
     if (event.data.type === "EXCHANGE_SESSION" && event.data.participantId && event.data.token) {
       safeSendMessage({ 
         action: "import_session", 

@@ -3,10 +3,17 @@
 // =========================================================
 function isBlockedUrl(url) {
   if (!url) return false;
-  // Ne pas tenter de bloquer les protocoles système
   if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('about:')) return false;
+  
   try {
-    var hostname = new URL(url).hostname.replace('www.', '');
+    var parsedUrl = new URL(url);
+    var hostname = parsedUrl.hostname.replace('www.', '');
+
+    if (parsedUrl.hostname.includes('google.') && parsedUrl.pathname === '/search') {
+      var udmParam = parsedUrl.searchParams.get('udm');
+      if (udmParam === '50') return true;
+    }
+
     return BLOCKED_DOMAINS.some(function(domain) {
       return hostname === domain || hostname.endsWith('.' + domain);
     });
@@ -29,9 +36,6 @@ function redirectToBlocked(tabId, blockedUrl, type = 'ia') {
   chrome.tabs.update(tabId, { url: fullUrl });
 }
 
-// =========================================================
-// RETRY ENVOI URL_CHANGED AU CONTENT SCRIPT
-// =========================================================
 function sendUrlChangedWithRetry(tabId, url, visitId) {
   function trySend() {
     if (currentVisitByTab[tabId] !== visitId) return;
@@ -48,22 +52,15 @@ function sendUrlChangedWithRetry(tabId, url, visitId) {
   setTimeout(trySend, 600);
 }
 
-function isSystemUrl(url) {
-  if (!url) return true;
-  return url.startsWith('chrome://') || 
-         url.startsWith('chrome-extension://') || 
-         url.startsWith('about:') || 
-         url.startsWith('edge://');
-}
-
-// CHANGEMENT D'ONGLET (onActivated)
+// =========================================================
+// CHANGEMENT D'ONGLET (onActivated) - CORRIGÉ !
+// =========================================================
 chrome.tabs.onActivated.addListener((activeInfo) => {
   if (!stateLoaded || !isTracking) return;
 
   chrome.tabs.get(activeInfo.tabId, (tab) => {
     if (chrome.runtime.lastError || !tab.url) return;
 
-    // Bloquer si on est en phase mémoire, sur un site non autorisé, hors exceptions système
     if (currentStudyPhase === 'memory' && 
         !isQuestionnaireUrl(tab.url) && 
         !isMemoryBlockedPage(tab.url) && 
@@ -76,14 +73,15 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
       return;
     }
 
-    // Enregistrer comme visite si ce n'est pas une page système
+    // CORRECTION : On enregistre TOUS les onglets valides, Y COMPRIS LE QUESTIONNAIRE !
     if (!tab.url.startsWith("chrome://") && 
         !tab.url.startsWith("chrome-extension://") && 
-        !tab.url.startsWith("about:") &&
-        !isQuestionnaireUrl(tab.url)) {
+        !tab.url.startsWith("about:")) {
       
+      // Nouveau VisitID unique à CHAQUE changement d'onglet
       const visitId = `visit_${++visitCounter}`;
       currentVisitByTab[tab.id] = visitId;
+
       sessionData.push({
         type: "tab_activated",
         visitId: visitId,
@@ -91,20 +89,21 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
         tabId: tab.id,
         timestamp: new Date().toISOString()
       });
+      
       saveStateNow();
       sendUrlChangedWithRetry(tab.id, tab.url, visitId);
     }
   });
 });
 
-
-// NAVIGATION : onUpdated
+// =========================================================
+// NAVIGATION (onUpdated) - CORRIGÉ !
+// =========================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!stateLoaded || !isTracking || !changeInfo.url) return;
 
   const url = changeInfo.url;
 
-  // Vérification blocage IA
   if (isBlockedUrl(url)) {
     redirectToBlocked(tabId, url, 'ia');
     sessionData.push({
@@ -117,7 +116,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
-  // Vérification blocage TEST MÉMOIRE hors exceptions système
   if (currentStudyPhase === 'memory' && 
       !isQuestionnaireUrl(url) && 
       !isMemoryBlockedPage(url) && 
@@ -130,7 +128,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
-  // Enregistrement de la navigation
+  // CORRECTION : On enregistre aussi les changements d'URL du questionnaire
   if (!url.startsWith("chrome://") && !url.startsWith("chrome-extension://") && !url.startsWith("about:")) {
     const visitId = `visit_${++visitCounter}`;
     currentVisitByTab[tabId] = visitId;
@@ -164,19 +162,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// onCommitted — FILET DE SÉCURITÉ
+// Filet de sécurité
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (!stateLoaded || !isTracking || details.frameId !== 0) return;
 
   const tabId = details.tabId;
   const url = details.url;
 
-  if (
-    url.startsWith("chrome://") ||
-    url.startsWith("chrome-extension://") ||
-    url.startsWith("about:")
-  )
-    return;
+  if (url.startsWith("chrome://") || url.startsWith("chrome-extension://") || url.startsWith("about:")) return;
 
   if (isBlockedUrl(url)) {
     redirectToBlocked(tabId, url, 'ia');
@@ -240,9 +233,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   }
 });
 
-// =========================================================
-// FERMETURE D'ONGLET
-// =========================================================
+// Fermeture d'onglet
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (!isTracking) return;
 

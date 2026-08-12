@@ -7,7 +7,7 @@ var trackingIndicator = document.getElementById("trackingIndicator");
 var completedBox = document.getElementById("completedBox");
 var noteText = document.getElementById("noteText");
 
-// Dictionnaire i18n étendu
+// i18n translations for the popup
 const popupI18n = {
     fr: {
         title: "🔬 Étude Navigation Web",
@@ -33,7 +33,7 @@ const popupI18n = {
         lien_consent:"Formulaire de consentement",
         lien_privacy:"Politique de confidentialité",
         
-        // Raisons d'arrêt
+        // stop reasons
         reason_completed: "Étude terminée avec succès — Merci pour votre participation !",
         reason_stopped_by_user: "Vous avez choisi de mettre fin à l'étude manuellement.",
         reason_inactivity: "L'étude a pris fin en raison d'une inactivité prolongée (1 heure).",
@@ -65,7 +65,7 @@ const popupI18n = {
         lien_consent:"Consent form",
         lien_privacy:"Privacy policy",
         
-        // Raisons d'arrêt
+        // stop reasons
         reason_completed: "Study completed successfully — Thank you for your participation!",
         reason_stopped_by_user: "You have manually chosen to stop the study.",
         reason_inactivity: "The study was terminated due to prolonged inactivity (1 hour).",
@@ -75,7 +75,7 @@ const popupI18n = {
     }
 };
 
-let activeLang = 'fr'; // Défaut
+let activeLang = 'fr'; // default
 
 function applyTranslations(lang) {
     activeLang = lang;
@@ -95,7 +95,7 @@ function applyTranslations(lang) {
     if (linkConsent) linkConsent.textContent = txt.lien_consent;
     if (linkPrivacy) linkPrivacy.textContent = txt.lien_privacy;
 
-    // Traduction de l'indicateur d'enregistrement actif
+    // Translation of the active recording indicator
     if (trackingIndicator && txt.indicator) {
         trackingIndicator.innerHTML = '<span class="dot"></span> ' + txt.indicator;
     }
@@ -106,7 +106,7 @@ function applyTranslations(lang) {
 }
 
 // =========================================================
-// RESTAURER L'ÉTAT
+// state restoration 
 // =========================================================
 chrome.storage.local.get(
   ["isTracking", "participantId", "studyCompleted", "currentLanguage", "terminationReason"],
@@ -123,7 +123,7 @@ chrome.storage.local.get(
 );
 
 // =========================================================
-// RÉAGIR AUX CHANGEMENTS EN TEMPS RÉEL
+// real time changes reaction
 // =========================================================
 chrome.storage.onChanged.addListener(function (changes) {
   chrome.storage.local.get(
@@ -142,7 +142,7 @@ chrome.storage.onChanged.addListener(function (changes) {
 });
 
 // =========================================================
-// BOUTON DÉMARRER / ARRÊTER
+// start/stop button
 // =========================================================
 toggleBtn.addEventListener("click", function () {
   chrome.storage.local.get(
@@ -158,7 +158,7 @@ toggleBtn.addEventListener("click", function () {
           return;
         }
 
-        // participantId et authToken (déjà stockés par import_session) restent intacts.
+        // participantId exists, we can start tracking
         chrome.storage.local.set({
           isTracking: true,
           studyCompleted: false
@@ -203,7 +203,7 @@ toggleBtn.addEventListener("click", function () {
 });
 
 // =========================================================
-// BOUTON RETOUR AU QUESTIONNAIRE
+// back button to questionnaire
 // =========================================================
 questionnaireBtn.addEventListener("click", function () {
   chrome.tabs.query({ url: "*://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/*" }, function (tabs) {
@@ -234,7 +234,7 @@ questionnaireBtn.addEventListener("click", function () {
 });
 
 // =========================================================
-// BOUTON DÉSINSTALLER
+// uninstall button
 // =========================================================
 uninstallBtn.addEventListener("click", function () {
   chrome.runtime.sendMessage({ action: "uninstall_self" }, function (response) {
@@ -246,7 +246,7 @@ uninstallBtn.addEventListener("click", function () {
 });
 
 // =========================================================
-// FONCTIONS UI
+// UI update functions
 // =========================================================
 function updateUI(isTracking, pId) {
   completedBox.style.display = "none";
@@ -288,7 +288,7 @@ function updateUI(isTracking, pId) {
 
 function showCompletedState(reason) {
   completedBox.style.display = "block";
-  participantBadge.style.display = "none"; // Masquer le badge ID une fois l'étude terminée
+  participantBadge.style.display = "none"; // hide the participant badge when showing the completed state
   toggleBtn.style.display = "none";
   questionnaireBtn.style.display = "none";
   trackingIndicator.style.display = "none";
@@ -296,7 +296,7 @@ function showCompletedState(reason) {
   noteText.style.display = "none";
   showStatus("", "");
 
-  // Mettre à jour dynamiquement la boîte de félicitations selon la cause de l'arrêt
+  // update the message based on the reason for termination
   const txt = popupI18n[activeLang];
   const translationKey = "reason_" + reason;
   completedBox.querySelector(".msg").textContent = txt[translationKey] || txt["reason_unknown"];

@@ -1,5 +1,5 @@
 // =========================================================
-// INITIALISATION : demander le visitId au background
+// INITIALISATION : ask background for the current visitId
 // =========================================================
 chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
   if (chrome.runtime.lastError) return;
@@ -10,19 +10,19 @@ chrome.runtime.sendMessage({ action: "get_visit_id" }, (response) => {
 });
 
 // =========================================================
-// MESSAGES DU BACKGROUND
+// BACKGROUND'S MESSAGES
 // =========================================================
 chrome.runtime.onMessage.addListener((msg) => {
-  // Changement d'URL détecté par le background
+  // URL change detected by the background
   if (msg.action === "url_changed") {
     if (currentVisitId === msg.visitId) return;
 
-    // Sauvegarder les stats de l'ancienne page
+    // Save stats for the previous page
     if (currentVisitId) {
       updateTimeAndSend();
     }
 
-    // Reset pour la nouvelle page
+    // Reset for the new page
     alreadySentForThisPage = false;
     currentVisitId = msg.visitId;
     maxScrollPercent = 0;
@@ -33,7 +33,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     setTimeout(recalculateScroll, 50);
   }
 
-  // Sauvegarde forcée (appelé par popup avant arrêt)
+  // Force save (called by popup before shutdown)
   if (msg.action === "force_save_stats") {
     alreadySentForThisPage = false;
     recalculateScroll();

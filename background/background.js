@@ -16,7 +16,7 @@ chrome.storage.onChanged.addListener(function (changes) {
   }
 });
 
-// Détecte l'installation et recharge l'onglet du questionnaire s'il est déjà ouvert
+// detect installation and reload the questionnaire tab if it is already open
 chrome.runtime.onInstalled.addListener(async function () {
   try {
     const tabs = await chrome.tabs.query({
@@ -28,6 +28,6 @@ chrome.runtime.onInstalled.addListener(async function () {
       }
     }
   } catch (e) {
-    console.error("Erreur lors du rafraîchissement automatique de l'onglet :", e);
+    console.error("Error while automatically refreshing the tab:", e);
   }
 });
