@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Étude Navigation Web — Université Laval",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Extension de recherche de l’Université Laval sur la navigation web. Données anonymisées et chiffrées. Étude approuvée par le CÉRUL.",
   "permissions": ["activeTab", "storage", "tabs", "webNavigation", "alarms"],
   "host_permissions": ["https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/"],
