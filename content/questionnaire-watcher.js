@@ -1,92 +1,123 @@
-// content/questionnaire-watcher.js
 (function () {
   var href = window.location.href;
   if (href.indexOf("/questionnaire/") === -1) return;
 
-  // Configuration de l'origine de confiance de votre étude
-  var TRUSTED_ORIGIN = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net";
+  var PRODUCTION_ORIGIN = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net";
   var completionSent = false;
+
+  function isTrustedOrigin(origin) {
+    return origin === PRODUCTION_ORIGIN;
+  }
+
+  function safeSendMessage(message, callback) {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+      try {
+        chrome.runtime.sendMessage(message, function(response) {
+          if (chrome.runtime.lastError) {
+            return;
+          }
+          if (callback) callback(response);
+        });
+      } catch (e) {
+        console.error("Error sending message to background:", e);
+      }
+    }
+  }
 
   function sendCompletion() {
     if (completionSent) return;
     completionSent = true;
-    try {
+    
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.get(["isTracking"], function (result) {
-        if (chrome.runtime.lastError) return;
-        if (!result || !result.isTracking) return;
-        chrome.runtime.sendMessage({ action: "questionnaire_completed" }, function () {
-          if (chrome.runtime.lastError) { /* Ignorer */ }
-        });
+        if (chrome.runtime.lastError || !result || !result.isTracking) return;
+        safeSendMessage({ action: "questionnaire_completed" });
       });
-    } catch (e) {}
+    }
   }
 
-  // ===== ÉCOUTER LES MESSAGES DE LA PAGE (app.js) =====
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+      if (message.action === "external_terminate") {
+        window.postMessage({ type: "EXTERNAL_TERMINATE", reason: message.reason }, window.location.origin);
+        sendResponse({ success: true });
+        return true;
+      }
+      if (message.action === "external_start_tracking") {
+        window.postMessage({ type: "EXTERNAL_START" }, window.location.origin);
+        sendResponse({ success: true });
+        return true;
+      }
+    });
+  }
+
   window.addEventListener("message", function (event) {
-    // SÉCURISATION : Rejeter tout message ne provenant pas de notre origine de confiance
-    if (event.origin !== TRUSTED_ORIGIN) return;
+    if (!isTrustedOrigin(event.origin)) return;
     if (!event.data) return;
 
-    // --- Enregistrement du Token JWT reçu ---
-    if (event.data.type === "SET_TOKEN" && event.data.token) {
-      chrome.runtime.sendMessage({ action: "set_token", token: event.data.token }, function() {
-        if (chrome.runtime.lastError) { /* Ignorer */ }
-      });
+    if (event.data.type === "REQUEST_UNINSTALL") {
+      safeSendMessage({ action: "uninstall_self" });
     }
-    // --- Enregistrement de la langue sélectionnée ---
-    else if (event.data.type === "SET_LANGUAGE") {
-      chrome.runtime.sendMessage({ action: "set_language", language: event.data.language });
+    
+    if (event.data.type === "PING_EXTENSION") {
+      window.postMessage({ type: "PONG_EXTENSION" }, window.location.origin);
     }
 
-    // --- Relais QUESTIONNAIRE_COMPLETED ---
-    else if (event.data.type === "QUESTIONNAIRE_COMPLETED") {
+    // inclusion and transfer of session data from the questionnaire to the extension
+    if (event.data.type === "EXCHANGE_SESSION" && event.data.participantId && event.data.token) {
+      safeSendMessage({ 
+        action: "import_session", 
+        participantId: event.data.participantId, 
+        token: event.data.token,
+        language: event.data.language
+      });
+    }
+
+    if (event.data.type === "SET_TOKEN" && event.data.token) {
+      safeSendMessage({ action: "set_token", token: event.data.token });
+    }
+
+    if (event.data.type === "SET_LANGUAGE") {
+      safeSendMessage({ action: "set_language", language: event.data.language });
+    }
+
+    if (event.data.type === "QUESTIONNAIRE_COMPLETED") {
       sendCompletion();
     }
 
-    // --- Relais START_TRACKING ---
-    else if (event.data.type === "START_TRACKING") {
-      chrome.runtime.sendMessage({ action: "start_tracking" }, function() {
-        if (chrome.runtime.lastError) { /* Ignorer */ }
-      });
+    if (event.data.type === "START_TRACKING") {
+      safeSendMessage({ action: "start_tracking" });
     }
 
-    // --- Relais SET_PHASE (memory / research) ---
-    else if (event.data.type === "SET_PHASE") {
-      chrome.runtime.sendMessage({ action: "set_phase", phase: event.data.phase }, function() {
-        if (chrome.runtime.lastError) { /* Ignorer */ }
-      });
+    if (event.data.type === "SET_PHASE") {
+      safeSendMessage({ action: "set_phase", phase: event.data.phase });
     }
 
-    // --- Relais GET_NAV_COUNT ---
-    else if (event.data.type === "GET_NAV_COUNT") {
-      chrome.runtime.sendMessage({ action: "get_nav_count" }, function(response) {
-        if (chrome.runtime.lastError) {
-          window.postMessage({ type: "NAV_COUNT_RESULT", count: -1 }, "*");
-          return;
+    if (event.data.type === "GET_NAV_COUNT") {
+      safeSendMessage({ action: "get_nav_count" }, function(response) {
+        if (response) {
+          window.postMessage({ type: "NAV_COUNT_RESULT", count: response.count }, "*");
         }
-        window.postMessage({ type: "NAV_COUNT_RESULT", count: response.count }, "*");
       });
     }
     
-    else if (event.data.type === "VERIFY_RESEARCH") {
-      chrome.runtime.sendMessage({ action: "verify_research_done", startTime: event.data.startTime }, function(response) {
-        if (chrome.runtime.lastError) {
-          window.postMessage({ type: "RESEARCH_VERIFY_RESULT", activityCount: 1 }, "*");
-          return;
+    if (event.data.type === "VERIFY_RESEARCH") {
+      safeSendMessage({ action: "verify_research_done", startTime: event.data.startTime }, function(response) {
+        if (response) {
+          window.postMessage({ type: "RESEARCH_VERIFY_RESULT", activityCount: response.activityCount }, "*");
         }
-        window.postMessage({ type: "RESEARCH_VERIFY_RESULT", activityCount: response.activityCount }, "*");
       });
     }
 
-    // --- Relais RESET_MEMORY_BYPASS ---
-    else if (event.data.type === "RESET_MEMORY_BYPASS") {
-        chrome.runtime.sendMessage({ action: "reset_memory_bypass" }, function() {
-            if (chrome.runtime.lastError) { /* Ignorer */ }
-        });
+    if (event.data.type === "STUDY_TERMINATED") {
+      safeSendMessage({ action: "study_terminated", reason: event.data.reason });
+    }
+
+    if (event.data.type === "RESET_MEMORY_BYPASS") {
+      safeSendMessage({ action: "reset_memory_bypass" });
     }
   });
 
-  // ===== DÉTECTION FIN PAR URL (fallback SPA) =====
   var completionPaths = ["/fin", "/merci", "/complete", "/thank", "/termine", "/end"];
   var lastCheckedUrl = "";
 
@@ -110,15 +141,12 @@
   }, 1000);
   setTimeout(function () { clearInterval(checkInterval); }, 3600000);
 
-  // ===== REPORTER L'URL AU BACKGROUND =====
   function reportUrl() {
-    try {
-      chrome.runtime.sendMessage({
-        action: "set_questionnaire_tab",
-        tabId: null,
-        url: window.location.href,
-      }, function () { if (chrome.runtime.lastError) { /* Ignorer */ } });
-    } catch (e) {}
+    safeSendMessage({
+      action: "set_questionnaire_tab",
+      tabId: null,
+      url: window.location.href,
+    });
   }
 
   reportUrl();

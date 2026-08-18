@@ -1,6 +1,6 @@
 // =========================================================
-// MASQUER L'APERÇU IA (AI Overview / Gemini) SUR GOOGLE
-// Actif UNIQUEMENT quand l'étude est démarrée
+// disable the AI overview block on Google search pages
+// only active when the tracking is active
 // =========================================================
 (function blockAIOverview() {
   // Ne s'exécute que sur les pages de recherche Google
@@ -79,7 +79,7 @@
     }
   }
 
-  // ── Vérifier l'état du tracking ──
+  // ── verify tracking state and start blocking if active ──
   chrome.storage.local.get(['isTracking'], function(result) {
     if (chrome.runtime.lastError) return;
     if (result.isTracking) {
@@ -87,7 +87,7 @@
     }
   });
 
-  // ── Réagir aux changements d'état en temps réel ──
+  // ── react to changes in tracking state ──
   chrome.storage.onChanged.addListener(function(changes) {
     if (changes.isTracking) {
       if (changes.isTracking.newValue) {

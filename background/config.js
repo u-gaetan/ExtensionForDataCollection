@@ -5,11 +5,7 @@ const SERVER_URL = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsi
 const QUESTIONNAIRE_BASE_URL = "https://api-lmv-ul-grh4cehth4f5b5gu.canadaeast-01.azurewebsites.net/questionnaire/";
 const AUTO_SEND_INTERVAL_MS = 3 * 60 * 1000;
 
-// TODO : À remplacer par un token dynamique avant la publication
-// sur le Chrome Web Store (voir explication token/JWT)
-const API_KEY = "de23c11b1d7c33af3dc6f249a18cdc29b529443af8f69148084992caa50c8515";
-
-// Sites bloqués pendant l'étude (IA générative)
+// blocked domains for the extension during the questionnaire completion
 const BLOCKED_DOMAINS = [
   // ── OpenAI ──
   "chat.openai.com",
@@ -43,7 +39,7 @@ const BLOCKED_DOMAINS = [
   "chat.deepseek.com",
   "deepseek.com",
 
-  // ── Autres chatbots IA ──
+  // ──other AI chatbots ──
   "poe.com",
   "pi.ai",
   "phind.com",
@@ -52,14 +48,14 @@ const BLOCKED_DOMAINS = [
   "coral.cohere.com",
   "groq.com",
 
-  // ── Assistants d'écriture IA ──
+  // ── AI writing assistants ──
   "jasper.ai",
   "writesonic.com",
   "copy.ai",
   "rytr.me",
   "quillbot.com",
 
-  // ── Moteurs de recherche IA ──
+  // ── AI search engines ──
   "andi.search",
   "komo.ai",
   "exa.ai"

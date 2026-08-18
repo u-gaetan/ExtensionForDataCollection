@@ -1,5 +1,5 @@
 // =========================================================
-// SUIVI DU TEMPS PASSÉ + VISIBILITÉ
+// time passed tracking + visibility
 // =========================================================
 function updateTimeAndSend() {
   if (alreadySentForThisPage) return;

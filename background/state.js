@@ -11,8 +11,10 @@ let authToken = null;
 let questionnaireTabId = null;
 let questionnaireUrl = null;
 let studyCompleted = false;
-let currentStudyPhase = "research"; // "research" ou "memory"
-let memoryEmergencyBypass = {}; // Stocke les onglets autorisés en urgence
+let currentStudyPhase = "research"; // "research" or "memory"
+let memoryEmergencyBypass = {}; //stockage for emergency bypasses of the memory phase, keyed by visitId
+let terminationReason = "unknown";
+let currentLanguage = "fr"; // study language, can be "fr" or "en", fr is by default
 
 // Badge
 function updateBadge(tracking) {
@@ -24,7 +26,7 @@ function updateBadge(tracking) {
       chrome.action.setBadgeText({ text: "" });
     }
   } catch (e) {
-    // Ignorer si chrome.action n'est pas disponible
+    console.error("Error while updating the badge:", e);
   }
 }
 
@@ -33,10 +35,7 @@ async function getOrCreateParticipantId() {
   if (storage.participantId) {
     participantId = storage.participantId;
   } else {
-    var timestamp = Date.now().toString(36);
-    var random = Math.random().toString(36).slice(2, 6);
-    participantId = "P-" + timestamp + "-" + random;
-    await chrome.storage.local.set({ participantId: participantId });
+    participantId = null;
   }
   return participantId;
 }
@@ -50,10 +49,14 @@ async function loadState() {
       "sw_currentVisitByTab",
       "sw_visitCounter",
       "authToken",
+      "participantId",
       "questionnaireTabId",
       "questionnaireUrl",
       "studyCompleted",
-      "currentStudyPhase", "memoryEmergencyBypass"
+      "currentStudyPhase", 
+      "memoryEmergencyBypass",
+      "terminationReason",
+      "currentLanguage"
     ]);
     isTracking = res.isTracking || false;
     sessionData = res.sw_sessionData || [];
@@ -61,11 +64,14 @@ async function loadState() {
     currentVisitByTab = res.sw_currentVisitByTab || {};
     visitCounter = res.sw_visitCounter || 0;
     authToken = res.authToken || null;
+    participantId = res.participantId || null;
     questionnaireTabId = res.questionnaireTabId || null;
     questionnaireUrl = res.questionnaireUrl || null;
     studyCompleted = res.studyCompleted || false;
     currentStudyPhase = res.currentStudyPhase || "research";
     memoryEmergencyBypass = res.memoryEmergencyBypass || {};
+    terminationReason = res.terminationReason || "unknown";
+    currentLanguage = res.currentLanguage || "fr";
     stateLoaded = true;
     
     if (isTracking) startAutoSend();
@@ -96,6 +102,8 @@ function _doSave() {
     questionnaireUrl: questionnaireUrl,
     studyCompleted: studyCompleted,
     currentStudyPhase: currentStudyPhase,
-    memoryEmergencyBypass: memoryEmergencyBypass
+    memoryEmergencyBypass: memoryEmergencyBypass,
+    terminationReason: terminationReason,
+    currentLanguage: currentLanguage
   });
 }
